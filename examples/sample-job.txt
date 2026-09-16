@@ -1,0 +1,53 @@
+Product Designer — Growth
+Northwind Analytics · Remote (US) · Full-time
+
+About the role
+Northwind Analytics is looking for a Product Designer to join our Growth
+squad. You will work alongside product managers, engineers, and a small
+research team to design and ship experiments across our onboarding, activation,
+and pricing surfaces. Our customers are data-driven teams at mid-market
+SaaS companies, and our product is the analytics workspace they open first
+thing in the morning.
+
+What you'll do
+- Own end-to-end design for one or more Growth workstreams (onboarding,
+  activation, upgrade, or referrals) — from problem framing through
+  shipped experiment.
+- Design and prototype quickly in Figma; run weekly usability sessions on
+  UserTesting or Maze and turn the transcripts into concrete design
+  changes.
+- Partner with our PM and engineers to instrument every experiment in
+  Amplitude and write the analysis doc after each ship.
+- Contribute components back to our design system (Figma library + a
+  small React codebase); we expect you to raise the bar for consistency
+  across surfaces.
+- Present work weekly at design critique and monthly at the company-wide
+  product review.
+
+What we're looking for
+Required:
+- 4+ years of product design experience, at least 2 of which shipping
+  consumer-grade B2B SaaS.
+- A portfolio that shows shipped work, not just concept explorations.
+  We care most about the "before / after" and the reasoning between them.
+- Strong Figma fluency, including auto-layout and component APIs.
+- Comfort partnering with data — reading Amplitude funnels, forming
+  hypotheses, and writing crisp experiment analyses.
+- Excellent written communication. Most of our team is async and
+  distributed across four time zones.
+
+Preferred:
+- Prior experience on a Growth or Activation team.
+- Front-end skills (HTML, CSS, light React) enough to prototype in code
+  or file precise engineering tickets.
+- Experience running or scoping quantitative research (surveys,
+  card-sorts, MaxDiff).
+- Familiarity with our stack: Amplitude, Segment, Statsig, Notion,
+  Linear.
+
+What we offer
+Competitive salary, equity, remote-first culture with quarterly team
+onsites, generous learning budget, and top-tier medical/dental/vision.
+
+Northwind is an equal-opportunity employer. We celebrate diversity and
+are committed to creating an inclusive environment for all employees.

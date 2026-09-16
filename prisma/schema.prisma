@@ -1,0 +1,173 @@
+// Career Forge — Prisma schema
+//
+// Designed for SQLite in Stage 1 with a clean migration path to Postgres:
+//   * All list-shaped fields are stored as JSON strings (SQLite has no native
+//     array type; Postgres will accept the same JSON directly, or the columns
+//     can be flipped to native `Json` / `String[]` in one migration).
+//   * All timestamped rows use `createdAt` + `updatedAt` for auditability.
+//   * Foreign keys are declared everywhere so referential integrity carries
+//     over to Postgres without additional work.
+//
+// Stage 1 uses only `User`, `JobListing`, and `CompetencyMap`. The remaining
+// models are declared now to lock the shape in — Stages 2–6 fill them in
+// without touching this file except for additive fields.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String?
+  currentRole    String?
+  // JSON-encoded string[] of the user's self-reported current skills.
+  currentSkills  String   @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  jobListings         JobListing[]
+  skillsGaps          SkillsGap[]
+  curricula           Curriculum[]
+  portfolioItems      PortfolioItem[]
+}
+
+model JobListing {
+  id          String   @id @default(cuid())
+  userId      String
+  rawText     String
+  sourceUrl   String?
+  companyName String
+  jobTitle    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  competencyMap  CompetencyMap?
+  skillsGaps     SkillsGap[]
+  curricula      Curriculum[]
+
+  @@index([userId])
+}
+
+model CompetencyMap {
+  id                       String   @id @default(cuid())
+  jobListingId             String   @unique
+  // Each of the following is a JSON-encoded string[] extracted by the analyzer.
+  requiredQualifications   String   @default("[]")
+  preferredQualifications  String   @default("[]")
+  tools                    String   @default("[]")
+  responsibilities         String   @default("[]")
+  softSkills               String   @default("[]")
+  // Full raw analysis payload from the model (JSON string).
+  rawAnalysis              String
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  jobListing JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+}
+
+// --- Stage 2+ stubs -------------------------------------------------------
+
+model SkillsGap {
+  id            String   @id @default(cuid())
+  userId        String
+  jobListingId  String
+  hasSkills     String   @default("[]")
+  needsToLearn  String   @default("[]")
+  partialSkills String   @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobListing JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([jobListingId])
+}
+
+enum CurriculumMode {
+  TRADITIONAL
+  AI_AUGMENTED
+}
+
+model Curriculum {
+  id            String         @id @default(cuid())
+  userId        String
+  jobListingId  String
+  mode          CurriculumMode
+  // JSON blob of the generated week-by-week plan.
+  generatedPlan String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobListing  JobListing   @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+
+  @@index([userId])
+  @@index([jobListingId])
+}
+
+enum AssignmentStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  EVALUATED
+  COMPLETE
+}
+
+model Assignment {
+  id                     String           @id @default(cuid())
+  curriculumId           String
+  weekNumber             Int
+  title                  String
+  brief                  String
+  // JSON-encoded string[] of competency ids/labels this assignment targets.
+  competenciesTargeted   String           @default("[]")
+  status                 AssignmentStatus @default(PENDING)
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  curriculum  Curriculum             @relation(fields: [curriculumId], references: [id], onDelete: Cascade)
+  submissions AssignmentSubmission[]
+
+  @@index([curriculumId])
+}
+
+model AssignmentSubmission {
+  id               String   @id @default(cuid())
+  assignmentId     String
+  userText         String
+  // JSON blob of the AI evaluation output.
+  aiEvaluation     String
+  iterationNumber  Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  assignment     Assignment      @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  portfolioItems PortfolioItem[]
+
+  @@index([assignmentId])
+}
+
+model PortfolioItem {
+  id                       String   @id @default(cuid())
+  userId                   String
+  assignmentSubmissionId   String
+  title                    String
+  // Free-form artifact payload (JSON string): could be text, links, files.
+  artifact                 String
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  user                 User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignmentSubmission AssignmentSubmission @relation(fields: [assignmentSubmissionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
