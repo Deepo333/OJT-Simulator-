@@ -34,6 +34,46 @@ export const curriculumSchema = z.object({
 
 export type CurriculumPayload = z.infer<typeof curriculumSchema>;
 
+// Resilience: normalize off-list phase / addressesFlag values instead of
+// failing the whole curriculum. Unknown phases become CORE; unknown flags
+// are dropped (the field is optional).
+export function coerceCurriculumPayload(raw: unknown): {
+  payload: unknown;
+  coercions: string[];
+} {
+  if (!raw || typeof raw !== "object") return { payload: raw, coercions: [] };
+  const coercions: string[] = [];
+  const obj = { ...(raw as Record<string, unknown>) };
+  if (!Array.isArray(obj.modules)) return { payload: raw, coercions };
+  const canon = (v: unknown) => String(v ?? "").trim().toUpperCase().replace(/[\s-]+/g, "_");
+  obj.modules = obj.modules.map((m, i) => {
+    if (!m || typeof m !== "object") return m;
+    const mod = { ...(m as Record<string, unknown>) };
+    const phase = canon(mod.phase);
+    if (!(CURRICULUM_PHASES as readonly string[]).includes(phase)) {
+      const mapped =
+        /FOUND|BASIC|INTRO|BEGIN/.test(phase) ? "FOUNDATIONAL"
+        : /ADV|STRETCH|EXPERT|OPTIONAL/.test(phase) ? "ADVANCED"
+        : "CORE";
+      coercions.push(`modules[${i}].phase: ${String(mod.phase)} -> ${mapped}`);
+      mod.phase = mapped;
+    } else if (phase !== mod.phase) {
+      mod.phase = phase;
+    }
+    if (mod.addressesFlag !== undefined) {
+      const flag = canon(mod.addressesFlag);
+      if ((ALIGNMENT_FLAGS as readonly string[]).includes(flag)) {
+        mod.addressesFlag = flag;
+      } else {
+        coercions.push(`modules[${i}].addressesFlag: ${String(mod.addressesFlag)} -> (dropped)`);
+        delete mod.addressesFlag;
+      }
+    }
+    return mod;
+  });
+  return { payload: obj, coercions };
+}
+
 export const curriculumJsonSchema = {
   type: "object",
   properties: {

@@ -173,10 +173,14 @@ enum ConfidenceLevel {
   EXPERT
 }
 
+// Documentation of the values used inside SkillAssessment.skillsBreakdown
+// (a Json column) — no column is typed with this enum, so changes here are
+// additive metadata only. Source of truth: lib/schemas/skill-assessment.ts.
 enum AlignmentFlag {
   ALIGNED
   RESUME_STRONGER_THAN_CONFIDENCE
   CONFIDENCE_STRONGER_THAN_RESUME
+  EMERGING
   TRUE_GAP
   NEEDS_REINFORCEMENT
   NO_SIGNAL

@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, DEFAULT_MODEL } from "./client";
 import {
+  coerceAssessmentPayload,
   skillAssessmentSchema,
   skillAssessmentJsonSchema,
   type SkillAssessmentPayload,
@@ -15,16 +16,18 @@ You will be given three inputs:
 
 Produce a structured comparison, one entry per skill, with an alignment flag and a confidence level.
 
-ALIGNMENT FLAGS
+ALIGNMENT FLAGS — use exactly one of these seven values, spelled exactly as written
 - ALIGNED: profile evidence and questionnaire signal agree at a solid level.
 - RESUME_STRONGER_THAN_CONFIDENCE: the profile claims it but the questionnaire shows low hands-on confidence. Add the skill to reinforcementFlags — this is "worth sharpening despite the experience on paper".
 - CONFIDENCE_STRONGER_THAN_RESUME: real comfort the resume undersells. Surface it; it's an asset.
-- TRUE_GAP: the job needs it, the profile shows nothing, and the questionnaire confirms little or no experience. Add to trueGaps — this is "next to build", not a verdict.
-- NEEDS_REINFORCEMENT: partial evidence and mid-level comfort — a topic for targeted practice, not from-scratch teaching.
+- EMERGING: the job needs it and there is no direct experience yet, but the candidate has transferable experience or an early signal to build on (e.g. no analytics tools, but they already read sales reports to decide what to do). Add to trueGaps — the plan builds it, with a head start. For a candidate whose background is far from the role, prefer EMERGING over TRUE_GAP whenever a transferable foothold genuinely exists.
+- TRUE_GAP: the job needs it, the profile shows nothing, and the questionnaire confirms no experience and no transferable foothold. Add to trueGaps — this is "next to build", not a verdict.
+- NEEDS_REINFORCEMENT: partial direct evidence and mid-level comfort — a topic for targeted practice, not from-scratch teaching.
 - NO_SIGNAL: neither source touched it. Use sparingly.
 
-CONFIDENCE LEVELS
-- UNKNOWN for NO_SIGNAL; TRUE_GAP for TRUE_GAP; otherwise EMERGING / DEVELOPING / PROFICIENT / EXPERT from the strongest agreeing evidence. Weight the questionnaire's behavioral answers above resume wording.
+CONFIDENCE LEVELS — exactly one of: UNKNOWN, TRUE_GAP, EMERGING, DEVELOPING, PROFICIENT, EXPERT
+- UNKNOWN for NO_SIGNAL; TRUE_GAP for TRUE_GAP; EMERGING for EMERGING; otherwise DEVELOPING / PROFICIENT / EXPERT from the strongest agreeing evidence. Weight the questionnaire's behavioral answers above resume wording.
+- Do not invent other values for either field; the tool schema rejects them.
 
 COVERAGE
 - One entry for every required qualification, every tool named in the job, every skill a probe targeted, and any preferred qualification with real signal. Skip preferred items with no signal.
@@ -106,7 +109,16 @@ export async function generateSkillAssessment(
         b.type === "tool_use" && b.name === TOOL_NAME,
     );
     if (toolUse) {
-      const parsed = skillAssessmentSchema.safeParse(toolUse.input);
+      // Map any off-list enum values to the closest valid one before
+      // validating, so a stray label never fails the whole assessment.
+      const { payload: coerced, coercions } = coerceAssessmentPayload(toolUse.input);
+      if (coercions.length > 0) {
+        console.warn(
+          "[assessment] coerced enum values:",
+          coercions.map((c) => `${c.path}: ${c.from} -> ${c.to}`).join("; "),
+        );
+      }
+      const parsed = skillAssessmentSchema.safeParse(coerced);
       if (parsed.success) {
         return { payload: parsed.data, raw: toolUse.input };
       }

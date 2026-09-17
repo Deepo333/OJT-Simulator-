@@ -23,6 +23,7 @@ const ALIGNMENT_LABEL: Record<SkillBreakdownItem["alignment"], string> = {
   ALIGNED: "Solid",
   RESUME_STRONGER_THAN_CONFIDENCE: "Worth sharpening",
   CONFIDENCE_STRONGER_THAN_RESUME: "Hidden strength",
+  EMERGING: "Emerging — a foothold to build on",
   TRUE_GAP: "Next to build",
   NEEDS_REINFORCEMENT: "Practice will lock it in",
   NO_SIGNAL: "Not assessed yet",

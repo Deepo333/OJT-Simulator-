@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, DEFAULT_MODEL } from "./client";
 import {
+  coerceCurriculumPayload,
   curriculumSchema,
   curriculumJsonSchema,
   type CurriculumPayload,
@@ -11,7 +12,7 @@ const SYSTEM_PROMPT = `You design personalized on-the-job-training roadmaps for 
 
 You will be given:
   (1) The target job (title, company, required/preferred qualifications, tools, responsibilities).
-  (2) A structured skill assessment: per-skill alignment flags (ALIGNED, NEEDS_REINFORCEMENT, RESUME_STRONGER_THAN_CONFIDENCE, CONFIDENCE_STRONGER_THAN_RESUME, TRUE_GAP, NO_SIGNAL), confidence levels, a summary, and two lists: reinforcementFlags (skills to sharpen despite experience on paper) and trueGaps (skills to build).
+  (2) A structured skill assessment: per-skill alignment flags (ALIGNED, NEEDS_REINFORCEMENT, RESUME_STRONGER_THAN_CONFIDENCE, CONFIDENCE_STRONGER_THAN_RESUME, EMERGING, TRUE_GAP, NO_SIGNAL), confidence levels, a summary, and two lists: reinforcementFlags (skills to sharpen despite experience on paper) and trueGaps (skills to build — both TRUE_GAP and EMERGING).
 
 THE PLAN SCALES TO THE GOAL
 Size the roadmap to the distance between where this person is today and being field-ready for THIS role — no bigger, no smaller.
@@ -21,7 +22,7 @@ Size the roadmap to the distance between where this person is today and being fi
 State in the overview how big the lift is and why the plan is sized that way. A short plan for someone nearly ready is a feature, not a shortfall.
 
 WHAT GOES IN
-1. TRUE_GAP skills that are required qualifications come first (FOUNDATIONAL or early CORE).
+1. TRUE_GAP and EMERGING skills that are required qualifications come first (FOUNDATIONAL or early CORE). For EMERGING skills, start from the transferable foothold the assessment names — the module's first step should be something they already do, then extend it.
 2. Reinforcement modules for RESUME_STRONGER_THAN_CONFIDENCE and NEEDS_REINFORCEMENT skills, framed as sharpening what they already have — never "learn from scratch".
 3. Nothing for ALIGNED, EXPERT, or CONFIDENCE_STRONGER_THAN_RESUME skills; instead, lean on those strengths in other modules' rationales ("you're already solid at X, so this goes straight to Y").
 4. Preferred qualifications only as ADVANCED, only where there's a genuine gap, and only if the essentials leave room.
@@ -89,7 +90,11 @@ export async function generateCurriculum(
         b.type === "tool_use" && b.name === TOOL_NAME,
     );
     if (toolUse) {
-      const parsed = curriculumSchema.safeParse(toolUse.input);
+      const { payload: coerced, coercions } = coerceCurriculumPayload(toolUse.input);
+      if (coercions.length > 0) {
+        console.warn("[curriculum] coerced values:", coercions.join("; "));
+      }
+      const parsed = curriculumSchema.safeParse(coerced);
       if (parsed.success) {
         return { payload: parsed.data, raw: toolUse.input };
       }
