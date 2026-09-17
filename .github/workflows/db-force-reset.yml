@@ -24,8 +24,6 @@ jobs:
     if: ${{ github.event.inputs.confirm == 'RESET' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,12 +34,32 @@ jobs:
 
       - run: npm ci --no-audit --no-fund
 
-      - name: Guard - DATABASE_URL secret present
+      # The secret is often pasted from a .env snippet, so it may arrive as
+      # DATABASE_URL="postgres://..." rather than the bare URL. Normalize it
+      # here and export the clean value for the remaining steps.
+      - name: Normalize DATABASE_URL secret
+        env:
+          RAW_DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          if [ -z "$DATABASE_URL" ]; then
+          if [ -z "$RAW_DATABASE_URL" ]; then
             echo "::error::DATABASE_URL secret is not set (repo Settings -> Secrets and variables -> Actions)."
             exit 1
           fi
+          v="$(printf '%s' "$RAW_DATABASE_URL" | tr -d '\r\n')"
+          v="$(printf '%s' "$v" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+          v="$(printf '%s' "$v" | sed -E 's/^(DATABASE_URL|POSTGRES_URL|PRISMA_DATABASE_URL|POSTGRES_PRISMA_URL)[[:space:]]*=[[:space:]]*//')"
+          v="$(printf '%s' "$v" | sed -E "s/^[\"']//; s/[\"']$//")"
+          scheme="${v%%://*}"
+          echo "Normalized secret: scheme='${scheme}' length=${#v}"
+          case "$v" in
+            postgres://*|postgresql://*) ;;
+            *)
+              echo "::error::After normalizing, the secret still does not start with postgres:// or postgresql:// (scheme seen: '${scheme}'). Re-enter the secret as the bare URL from Vercel -> Storage -> your database, e.g. postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=require"
+              exit 1
+              ;;
+          esac
+          echo "::add-mask::$v"
+          echo "DATABASE_URL=$v" >> "$GITHUB_ENV"
 
       - name: Force reset (drop everything, recreate from schema.prisma)
         run: npx prisma db push --force-reset --accept-data-loss --skip-generate
