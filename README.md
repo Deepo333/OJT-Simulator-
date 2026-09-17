@@ -1,133 +1,140 @@
-# Career Forge — Stage 1
+# Career Forge — Stages 1 & 2
 
-Turn a real job listing into a structured competency map. This repository
-is Stage 1 of a 6-stage build; the goal here is to prove the architectural
-pattern end-to-end with **one working feature**: Job Analysis.
+Turn a real job listing into a personalized on-the-job-training curriculum.
+
+**Stage 1** analyzes a pasted job listing into a structured competency map.
+**Stage 2** builds the user's profile from a resume upload, calibrates real
+confidence via a 15-question questionnaire, and produces a personalized
+curriculum roadmap. Stages 3–6 (lesson content, assignments, coach,
+portfolio) plug in on top.
 
 ## Tech stack
 
 - **Next.js 15** (App Router, Server Actions, TypeScript strict mode)
-- **Prisma** ORM on **SQLite** (schema designed to migrate cleanly to Postgres)
-- **Tailwind CSS** + **shadcn/ui** primitives
-- **Zod** for runtime validation
-- **@anthropic-ai/sdk** for AI, using tool-use for structured outputs
+- **Prisma** ORM on **Postgres** (Prisma Postgres on Vercel in prod)
+- **Tailwind CSS** + shadcn/ui primitives
+- **Zod** for runtime validation everywhere the AI writes
+- **@anthropic-ai/sdk** — Claude via tool-use for structured outputs
+- **pdf-parse** + **mammoth** for resume text extraction
 
 ## Getting started
 
 ```bash
-# 1. Install dependencies
-npm install
-
-# 2. Configure environment variables
 cp .env.example .env.local
-# then edit .env.local and set ANTHROPIC_API_KEY
+# then edit .env.local: set DATABASE_URL to your Postgres URL and
+# set ANTHROPIC_API_KEY.
 
-# 3. Initialize the database (creates prisma/dev.db + Prisma client)
-npx prisma migrate dev --name init
-
-# 4. Seed the demo user (optional but recommended)
-npm run db:seed
-
-# 5. Run the dev server
+npm install
+npx prisma db push        # applies the schema to your DB
+npm run db:seed           # optional — creates the demo user
 npm run dev
 ```
 
-Open http://localhost:3000, paste the sample listing from
-`examples/sample-job.txt` into the form, submit, and you'll be redirected
-to `/jobs/<id>` with a full competency map.
+Open http://localhost:3000, paste `examples/sample-job.txt`, and follow
+the flow through to your curriculum.
+
+## Build & deploy (Vercel)
+
+The `build` script is `prisma generate && prisma db push && next build` —
+`prisma db push` runs on every deploy so schema changes take effect on the
+live database without a migration folder. For local build checks without
+touching the DB, use `npm run build:local`.
 
 ## Required environment variables
 
-| Variable            | Purpose                                    | Required |
-| ------------------- | ------------------------------------------ | -------- |
-| `DATABASE_URL`      | Prisma datasource. Defaults to SQLite.     | yes      |
-| `ANTHROPIC_API_KEY` | Anthropic API key for the analyzer.        | yes      |
-| `ANTHROPIC_MODEL`   | Model id override for the analyzer.        | no       |
+| Variable            | Purpose                                    |
+| ------------------- | ------------------------------------------ |
+| `DATABASE_URL`      | Postgres connection URL.                   |
+| `ANTHROPIC_API_KEY` | Anthropic API key for every AI call.       |
+| `ANTHROPIC_MODEL`   | Optional. Override the default model id.   |
 
-`GET /api/health` returns `200` when the DB is reachable and
-`ANTHROPIC_API_KEY` is set; `503` otherwise.
+`GET /api/health` returns `200` when DB is reachable and the API key is set.
+
+## User flow
+
+1. **`/`** — Home. Paste a job listing.
+2. **`/jobs/[id]`** — Competency map view. CTA: "Build your profile →".
+3. **`/jobs/[id]/profile`** — Resume upload (PDF/DOCX/paste) + three optional
+   supplemental fields (extra work history, extra skills, extra certs).
+4. **`/jobs/[id]/questionnaire`** — 5 fixed + 10 dynamic questions, one at
+   a time, comfort-scale answers with a free-text escape hatch.
+5. **`/jobs/[id]/curriculum`** — Personalized roadmap: overview, true gaps,
+   reinforcement flags, and an ordered list of modules with rationales.
 
 ## Project structure
 
 ```
-app/                    Next.js routes and pages
-  page.tsx              Home — the job-analysis form
-  jobs/[id]/page.tsx    Results view for one analyzed listing
-  api/health/route.ts   DB + env health check
+app/                     Next.js routes and pages
+  page.tsx               Home — job-analysis form
+  jobs/[id]/
+    page.tsx             Competency map + "next step" CTA
+    profile/page.tsx     Resume upload flow
+    questionnaire/page.tsx  One-at-a-time questionnaire
+    curriculum/page.tsx  Personalized roadmap
+  api/health/route.ts    DB + env health check
 components/
-  ui/                   shadcn/ui primitives (button, card, input, …)
-  features/             Feature components (JobAnalysisForm, JobAnalysisView)
+  ui/                    shadcn primitives
+  features/              JobAnalysisForm, JobAnalysisView, ResumeProfileForm,
+                         QuestionnaireFlow, CurriculumRoadmap
 lib/
-  ai/                   Anthropic client, prompts, structured analyzer
-  db/prisma.ts          Prisma singleton
-  schemas/              Zod schemas shared between AI outputs and DB
+  ai/                    Anthropic client + one file per model call
+  db/prisma.ts           Prisma singleton
+  resume/extract-text.ts PDF/DOCX/text extraction
+  schemas/               Zod + JSON schemas shared with the AI
 modules/
-  job-analysis/         Stage 1 module (Server Action + types)
-  skills-gap/           Stage 2 stub
-  curriculum/           Stage 3 stub
-  assignments/          Stage 4 stub
-  coach/                Stage 5a stub
-  evaluation/           Stage 5b stub
-  portfolio/            Stage 6 stub
+  job-analysis/          Stage 1
+  resume-profile/        Stage 2, Step 1
+  questionnaire/         Stage 2, Step 2
+  skill-assessment/      Stage 2, Step 3
+  curriculum/            Stage 2, Step 4 (also drives Stage 3+ later)
+  assignments/           Stage 4 stub
+  coach/                 Stage 5a stub
+  evaluation/            Stage 5b stub
+  portfolio/             Stage 6 stub
+  skills-gap/            Superseded by skill-assessment (kept as stub)
 prisma/
-  schema.prisma         All models (Stage-1 uses User, JobListing, CompetencyMap)
-  seed.ts               Demo user seed
+  schema.prisma          All models across all stages
+  seed.ts                Demo user seed
 examples/
-  sample-job.txt        Ready-to-paste sample listing
+  sample-job.txt         Ready-to-paste sample listing
 ```
 
-The `modules/` directory is the "one feature per folder" contract: each
-future stage adds a new module without touching the ones that came before.
-The `CompetencyMap` DB row is the interface between Stage 1 and Stage 2 —
-Stage 2 reads it, it doesn't reach into Stage 1's code.
+## Data model highlights
 
-## Data model
+- `ResumeProfile` — one per (user, job) attempt. Unified skill inventory:
+  structured `workHistory` (JSON), plus flat `impliedSkills`,
+  `toolsMentioned`, `explicitSkills`, `certifications` arrays.
+- `Questionnaire` — the 15 questions as JSON. `QuestionnaireResponse` is
+  one row per answer, uniqued by `(questionnaireId, questionId)`.
+- `SkillAssessment` — the cross-reference output: per-skill breakdown with
+  `alignment` (ALIGNED / RESUME_STRONGER_THAN_CONFIDENCE / TRUE_GAP / …)
+  and `confidence` (UNKNOWN → EXPERT), plus denormalized
+  `reinforcementFlags` and `trueGaps` lists.
+- `Curriculum` — modules JSON: title, description, rationale, targeted
+  skills, phase (FOUNDATIONAL / CORE / ADVANCED), estimated hours.
 
-Even though Stage 1 only writes `User`, `JobListing`, and `CompetencyMap`,
-the full schema for Stages 2–6 is declared in `prisma/schema.prisma`
-today. This locks the shape in and avoids painful reshuffles later.
+## How the AI calls work
 
-- `User` — email, name, currentRole, currentSkills (JSON string).
-- `JobListing` — raw text plus optional sourceUrl.
-- `CompetencyMap` — the analyzer's structured output (one per listing).
-- `SkillsGap`, `Curriculum`, `Assignment`, `AssignmentSubmission`,
-  `PortfolioItem` — declared with FKs, no logic yet.
+Every AI call in `lib/ai/*` follows the same pattern:
 
-SQLite has no native array type, so all list-shaped fields are stored as
-JSON-encoded strings. Migrating to Postgres is a one-line change to the
-Prisma datasource plus (optionally) flipping those columns to native `Json`
-in a follow-up migration.
+1. A rigorous system prompt scoped to one job.
+2. A single Anthropic **tool** with an `input_schema` matching a Zod schema.
+3. `tool_choice: { type: "tool", name: "…" }` forces JSON output.
+4. On the returned `tool_use` block, Zod validates the payload.
+5. On failure: one retry with the exact Zod errors fed back as a
+   `tool_result` with `is_error: true`.
 
-## How the AI call works
-
-1. `analyzeAndPersistJob` (Server Action) validates the form with Zod,
-   ensures the demo user exists, and creates a `JobListing` row up front
-   so a failed AI call still leaves a record.
-2. `lib/ai/analyze-job.ts` calls Claude with:
-   - a rigorous system prompt (`lib/ai/prompts.ts`),
-   - a JSON schema handed to the model as an Anthropic **tool** with
-     `tool_choice: { type: "tool", name: "return_competency_map" }` — this
-     forces the model to emit structured JSON,
-   - one retry on schema-validation failure with the specific Zod errors
-     fed back into the conversation.
-3. The tool_use payload is validated against `competencyMapSchema`
-   (Zod). Only a validated result is persisted.
-4. The route redirects to `/jobs/[id]` where the results render.
+That's five files: `analyze-job`, `extract-resume-profile`,
+`generate-questionnaire`, `generate-assessment`, `generate-curriculum`.
 
 ## What's next
 
-Stages 2–6 (one module per stage):
-
-- **Stage 2 — Skills-gap analysis.** Compare `CompetencyMap` with
-  `User.currentSkills` to produce a `SkillsGap` row with three buckets:
-  has / partial / needs-to-learn.
-- **Stage 3 — Curriculum generation.** Build a week-by-week OJT plan
-  from the CompetencyMap + SkillsGap, in `TRADITIONAL` or `AI_AUGMENTED`
-  mode.
-- **Stage 4 — Assignments.** Instantiate realistic work assignments
-  from the curriculum, with a submission → evaluation → iteration loop.
-- **Stage 5 — Coach + Evaluation.** Streaming AI coach scoped to a
-  single assignment; an evaluator that scores submissions and feeds
-  back into the curriculum.
+- **Stage 3 — Lesson content.** Fill each `CurriculumModule` with real
+  material and exercises.
+- **Stage 4 — Assignments.** Instantiate `Assignment` rows from the plan,
+  with a submission → evaluation → iteration loop.
+- **Stage 5 — Coach + Evaluation.** Streaming AI coach scoped to a single
+  assignment; an evaluator that scores submissions and feeds back into
+  the curriculum.
 - **Stage 6 — Portfolio.** Turn evaluated submissions into a shareable
   portfolio that proves competency for the target role.

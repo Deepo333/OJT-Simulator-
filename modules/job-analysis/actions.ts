@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { analyzeJob } from "@/lib/ai/analyze-job";
 import {
@@ -33,7 +34,7 @@ async function ensureDemoUser() {
     create: {
       email: DEMO_EMAIL,
       name: "Demo User",
-      currentSkills: JSON.stringify([]),
+      currentSkills: [],
     },
   });
 }
@@ -116,15 +117,15 @@ export async function analyzeAndPersistJob(
     prisma.competencyMap.create({
       data: {
         jobListingId: jobListing.id,
-        requiredQualifications: JSON.stringify(cm.requiredQualifications),
-        preferredQualifications: JSON.stringify(cm.preferredQualifications),
-        tools: JSON.stringify(cm.tools),
-        responsibilities: JSON.stringify(cm.responsibilities),
-        softSkills: JSON.stringify(cm.softSkills),
-        rawAnalysis: JSON.stringify(analysis.rawAnalysis),
+        requiredQualifications: cm.requiredQualifications,
+        preferredQualifications: cm.preferredQualifications,
+        tools: cm.tools,
+        responsibilities: cm.responsibilities,
+        softSkills: cm.softSkills,
+        rawAnalysis: analysis.rawAnalysis as Prisma.InputJsonValue,
       },
     }),
   ]);
 
-  redirect(`/jobs/${jobListing.id}`);
+  redirect(`/jobs/${jobListing.id}/profile`);
 }

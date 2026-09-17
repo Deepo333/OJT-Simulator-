@@ -1,40 +1,38 @@
-// Career Forge — Prisma schema
+// Career Forge — Prisma schema (Postgres)
 //
-// Designed for SQLite in Stage 1 with a clean migration path to Postgres:
-//   * All list-shaped fields are stored as JSON strings (SQLite has no native
-//     array type; Postgres will accept the same JSON directly, or the columns
-//     can be flipped to native `Json` / `String[]` in one migration).
-//   * All timestamped rows use `createdAt` + `updatedAt` for auditability.
-//   * Foreign keys are declared everywhere so referential integrity carries
-//     over to Postgres without additional work.
-//
-// Stage 1 uses only `User`, `JobListing`, and `CompetencyMap`. The remaining
-// models are declared now to lock the shape in — Stages 2–6 fill them in
-// without touching this file except for additive fields.
+// Deployed against Prisma Postgres on Vercel; `prisma db push` runs on every
+// build so schema changes apply to the live DB without a migration folder.
+// Native Postgres features (String[] arrays, Json, enums) are used freely.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id             String   @id @default(cuid())
-  email          String   @unique
-  name           String?
-  currentRole    String?
-  // JSON-encoded string[] of the user's self-reported current skills.
-  currentSkills  String   @default("[]")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+// ---------------------------------------------------------------------------
+// Stage 1 — Job analysis
+// ---------------------------------------------------------------------------
 
-  jobListings         JobListing[]
-  skillsGaps          SkillsGap[]
-  curricula           Curriculum[]
-  portfolioItems      PortfolioItem[]
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  currentRole   String?
+  currentSkills String[] @default([])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  jobListings      JobListing[]
+  resumeProfiles   ResumeProfile[]
+  questionnaires   Questionnaire[]
+  skillAssessments SkillAssessment[]
+  skillsGaps       SkillsGap[]
+  curricula        Curriculum[]
+  portfolioItems   PortfolioItem[]
 }
 
 model JobListing {
@@ -47,49 +45,156 @@ model JobListing {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  competencyMap  CompetencyMap?
-  skillsGaps     SkillsGap[]
-  curricula      Curriculum[]
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  competencyMap    CompetencyMap?
+  resumeProfiles   ResumeProfile[]
+  questionnaires   Questionnaire[]
+  skillAssessments SkillAssessment[]
+  skillsGaps       SkillsGap[]
+  curricula        Curriculum[]
 
   @@index([userId])
 }
 
 model CompetencyMap {
-  id                       String   @id @default(cuid())
-  jobListingId             String   @unique
-  // Each of the following is a JSON-encoded string[] extracted by the analyzer.
-  requiredQualifications   String   @default("[]")
-  preferredQualifications  String   @default("[]")
-  tools                    String   @default("[]")
-  responsibilities         String   @default("[]")
-  softSkills               String   @default("[]")
-  // Full raw analysis payload from the model (JSON string).
-  rawAnalysis              String
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  id                      String   @id @default(cuid())
+  jobListingId            String   @unique
+  requiredQualifications  String[] @default([])
+  preferredQualifications String[] @default([])
+  tools                   String[] @default([])
+  responsibilities        String[] @default([])
+  softSkills              String[] @default([])
+  rawAnalysis             Json
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 
   jobListing JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
 }
 
-// --- Stage 2+ stubs -------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Stage 2 — Resume profile → questionnaire → assessment → curriculum
+// ---------------------------------------------------------------------------
 
-model SkillsGap {
-  id            String   @id @default(cuid())
-  userId        String
-  jobListingId  String
-  hasSkills     String   @default("[]")
-  needsToLearn  String   @default("[]")
-  partialSkills String   @default("[]")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+model ResumeProfile {
+  id                         String   @id @default(cuid())
+  userId                     String
+  jobListingId               String
+  // Original resume text (extracted from PDF/DOCX or pasted directly).
+  rawResumeText              String
+  // Optional freeform additions the user provided alongside the resume.
+  supplementalWorkHistory    String?
+  supplementalSkills         String?
+  supplementalCertifications String?
+  // Structured work history — JSON array of {role, company, dates, summary, responsibilities[]}.
+  workHistory                Json
+  // Flat, deduplicated inventories the analyzer produced.
+  impliedSkills              String[] @default([])
+  toolsMentioned             String[] @default([])
+  explicitSkills             String[] @default([])
+  certifications             String[] @default([])
+  // Full raw extraction payload, kept for debugging and replays.
+  rawExtraction              Json
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 
-  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  jobListing JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobListing     JobListing      @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+  questionnaires Questionnaire[]
 
   @@index([userId])
   @@index([jobListingId])
 }
+
+enum QuestionKind {
+  STANDARDIZED
+  DYNAMIC_VERIFY_CLAIMED
+  DYNAMIC_PROBE_JOB_REQUIREMENT
+}
+
+model Questionnaire {
+  id              String   @id @default(cuid())
+  userId          String
+  jobListingId    String
+  resumeProfileId String
+  // JSON array of questions. Shape (Zod-validated on write):
+  //   { id, kind: QuestionKind, order, text, targetSkill?, options: [{value, label}], allowFreeText }
+  questions       Json
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobListing       JobListing              @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+  resumeProfile    ResumeProfile           @relation(fields: [resumeProfileId], references: [id], onDelete: Cascade)
+  responses        QuestionnaireResponse[]
+  skillAssessments SkillAssessment[]
+
+  @@index([userId])
+  @@index([jobListingId])
+}
+
+model QuestionnaireResponse {
+  id              String   @id @default(cuid())
+  questionnaireId String
+  questionId      String
+  // Named comfort-scale value the user picked (or null if only free text).
+  selectedOption  String?
+  // Optional freeform note — always available as an escape hatch.
+  freeTextAnswer  String?
+  createdAt       DateTime @default(now())
+
+  questionnaire Questionnaire @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+
+  @@unique([questionnaireId, questionId])
+  @@index([questionnaireId])
+}
+
+enum ConfidenceLevel {
+  UNKNOWN
+  TRUE_GAP
+  EMERGING
+  DEVELOPING
+  PROFICIENT
+  EXPERT
+}
+
+enum AlignmentFlag {
+  ALIGNED
+  RESUME_STRONGER_THAN_CONFIDENCE
+  CONFIDENCE_STRONGER_THAN_RESUME
+  TRUE_GAP
+  NEEDS_REINFORCEMENT
+  NO_SIGNAL
+}
+
+model SkillAssessment {
+  id              String   @id @default(cuid())
+  userId          String
+  jobListingId    String
+  questionnaireId String
+  // JSON array — one entry per skill considered. Zod-validated on write.
+  // Shape:
+  //   { skill, resumeEvidence, questionnaireSignal, alignment: AlignmentFlag,
+  //     confidence: ConfidenceLevel, rationale }
+  skillsBreakdown    Json
+  // Denormalized shortcut lists so the curriculum generator can key off them.
+  reinforcementFlags String[] @default([])
+  trueGaps           String[] @default([])
+  rawAssessment      Json
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobListing    JobListing    @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+  questionnaire Questionnaire @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  curricula     Curriculum[]
+
+  @@index([userId])
+  @@index([jobListingId])
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3+ — Curriculum + downstream (Stage 4-6 stubs still live below)
+// ---------------------------------------------------------------------------
 
 enum CurriculumMode {
   TRADITIONAL
@@ -97,18 +202,42 @@ enum CurriculumMode {
 }
 
 model Curriculum {
-  id            String         @id @default(cuid())
+  id                String         @id @default(cuid())
+  userId            String
+  jobListingId      String
+  skillAssessmentId String?
+  mode              CurriculumMode @default(AI_AUGMENTED)
+  // JSON array of modules. Shape (Zod-validated on write):
+  //   { order, title, description, rationale, targetedSkills[],
+  //     phase: 'FOUNDATIONAL' | 'CORE' | 'ADVANCED',
+  //     estimatedHours, addressesFlag?: AlignmentFlag }
+  modules           Json
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobListing      JobListing       @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
+  skillAssessment SkillAssessment? @relation(fields: [skillAssessmentId], references: [id], onDelete: SetNull)
+  assignments     Assignment[]
+
+  @@index([userId])
+  @@index([jobListingId])
+}
+
+// SkillsGap is superseded by SkillAssessment for Stage 2 — kept as a stub so
+// any earlier consumers keep compiling until they're rewritten.
+model SkillsGap {
+  id            String   @id @default(cuid())
   userId        String
   jobListingId  String
-  mode          CurriculumMode
-  // JSON blob of the generated week-by-week plan.
-  generatedPlan String
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  hasSkills     String[] @default([])
+  needsToLearn  String[] @default([])
+  partialSkills String[] @default([])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  jobListing  JobListing   @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
-  assignments Assignment[]
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobListing JobListing @relation(fields: [jobListingId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([jobListingId])
@@ -123,16 +252,15 @@ enum AssignmentStatus {
 }
 
 model Assignment {
-  id                     String           @id @default(cuid())
-  curriculumId           String
-  weekNumber             Int
-  title                  String
-  brief                  String
-  // JSON-encoded string[] of competency ids/labels this assignment targets.
-  competenciesTargeted   String           @default("[]")
-  status                 AssignmentStatus @default(PENDING)
-  createdAt              DateTime         @default(now())
-  updatedAt              DateTime         @updatedAt
+  id                   String           @id @default(cuid())
+  curriculumId         String
+  weekNumber           Int
+  title                String
+  brief                String
+  competenciesTargeted String[]         @default([])
+  status               AssignmentStatus @default(PENDING)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
 
   curriculum  Curriculum             @relation(fields: [curriculumId], references: [id], onDelete: Cascade)
   submissions AssignmentSubmission[]
@@ -141,14 +269,13 @@ model Assignment {
 }
 
 model AssignmentSubmission {
-  id               String   @id @default(cuid())
-  assignmentId     String
-  userText         String
-  // JSON blob of the AI evaluation output.
-  aiEvaluation     String
-  iterationNumber  Int      @default(1)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id              String   @id @default(cuid())
+  assignmentId    String
+  userText        String
+  aiEvaluation    Json
+  iterationNumber Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   assignment     Assignment      @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   portfolioItems PortfolioItem[]
@@ -157,14 +284,13 @@ model AssignmentSubmission {
 }
 
 model PortfolioItem {
-  id                       String   @id @default(cuid())
-  userId                   String
-  assignmentSubmissionId   String
-  title                    String
-  // Free-form artifact payload (JSON string): could be text, links, files.
-  artifact                 String
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  id                     String   @id @default(cuid())
+  userId                 String
+  assignmentSubmissionId String
+  title                  String
+  artifact               Json
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   user                 User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   assignmentSubmission AssignmentSubmission @relation(fields: [assignmentSubmissionId], references: [id], onDelete: Cascade)

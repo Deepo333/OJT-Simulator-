@@ -1,16 +1,19 @@
-# `modules/curriculum` — Stage 3 (stub)
+# `modules/curriculum` — Stage 2, Step 4 (partial — Stage 3 later expands)
 
-Generate a weekly on-the-job-training plan from a `CompetencyMap` +
-`SkillsGap`, in one of two modes:
+Stage-2 role: turn a `SkillAssessment` into a `Curriculum` row containing an
+ordered list of modules. Each module carries a rationale that ties back to
+a specific gap or reinforcement need from the assessment.
 
-- `TRADITIONAL` — a classroom-shaped curriculum (readings, exercises).
-- `AI_AUGMENTED` — an assignment-driven curriculum designed to be run
-  with AI coaching (Stage 5).
+## Files
 
-## Contract (planned)
+- `actions.ts` — `generateAndPersistCurriculum(skillAssessmentId)`.
 
-- Input: `{ userId, jobListingId, mode }`.
-- Output: `Curriculum` row with `generatedPlan` (JSON) — a week-by-week
-  breakdown with target competencies + suggested assignments.
-- Downstream: Stage 4 (`assignments`) instantiates `Assignment` rows from
-  the plan.
+## Contract
+
+- Input: an existing `SkillAssessment` id.
+- Output: a `Curriculum` row (mode = `AI_AUGMENTED`), with modules as JSON.
+- Displayed at `/jobs/[id]/curriculum` via `CurriculumRoadmap`.
+
+Stage 3 (later) will add lesson content and Stage 4 will instantiate
+`Assignment` rows from these modules. Neither will need to change this
+module — the DB row is the contract.

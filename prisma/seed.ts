@@ -12,12 +12,12 @@ async function main() {
       email: demoEmail,
       name: "Demo User",
       currentRole: "Marketing Coordinator (3 years)",
-      currentSkills: JSON.stringify([
+      currentSkills: [
         "Content writing",
         "Google Analytics",
         "Basic HTML/CSS",
         "Email campaign management",
-      ]),
+      ],
     },
   });
 
