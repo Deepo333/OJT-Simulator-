@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { useRouter } from "next/navigation";
 import {
   buildResumeProfile,
   type ResumeProfileFormState,
@@ -30,6 +31,24 @@ function fieldError(state: ResumeProfileFormState, field: string) {
 export function ResumeProfileForm({ jobListingId }: { jobListingId: string }) {
   const [state, formAction] = useActionState(buildResumeProfile, initial);
   const [showPaste, setShowPaste] = useState(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    if (state.status === "success") {
+      router.push(state.redirectTo);
+    }
+  }, [state, router]);
+
+  if (state.status === "success") {
+    return (
+      <div className="rounded-md border bg-muted/30 p-4 text-sm">
+        Profile saved — taking you to the questionnaire…{" "}
+        <a href={state.redirectTo} className="underline underline-offset-4">
+          Continue
+        </a>
+      </div>
+    );
+  }
 
   const fileError = fieldError(state, "resumeFile");
   const pasteError = fieldError(state, "pastedResume");

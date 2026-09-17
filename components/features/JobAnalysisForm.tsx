@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import { useFormStatus } from "react-dom";
+import { useRouter } from "next/navigation";
 import {
   analyzeAndPersistJob,
   type JobAnalysisFormState,
@@ -35,6 +36,24 @@ export function JobAnalysisForm() {
     analyzeAndPersistJob,
     initialState,
   );
+  const router = useRouter();
+
+  useEffect(() => {
+    if (state.status === "success") {
+      router.push(state.redirectTo);
+    }
+  }, [state, router]);
+
+  if (state.status === "success") {
+    return (
+      <div className="rounded-md border bg-muted/30 p-4 text-sm">
+        Analysis complete — taking you to the next step…{" "}
+        <a href={state.redirectTo} className="underline underline-offset-4">
+          Continue
+        </a>
+      </div>
+    );
+  }
 
   const rawError = fieldError(state, "rawJobText");
   const companyError = fieldError(state, "companyName");

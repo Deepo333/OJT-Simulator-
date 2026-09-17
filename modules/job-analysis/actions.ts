@@ -1,6 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { analyzeJob } from "@/lib/ai/analyze-job";
@@ -21,8 +20,12 @@ import {
 //   * Redirects to /jobs/[id] on success. On validation failure, returns a
 //     structured error the form can render inline.
 
+// On success the action returns the destination instead of calling
+// redirect(): a redirect thrown through useActionState is the one path that
+// misbehaves in some browsers (notably iOS Safari), so the client navigates.
 export type JobAnalysisFormState =
   | { status: "idle" }
+  | { status: "success"; redirectTo: string }
   | { status: "error"; errors: JobAnalysisFormError[] };
 
 const DEMO_EMAIL = "demo@career-forge.local";
@@ -127,5 +130,5 @@ export async function analyzeAndPersistJob(
     }),
   ]);
 
-  redirect(`/jobs/${jobListing.id}/profile`);
+  return { status: "success", redirectTo: `/jobs/${jobListing.id}/profile` };
 }
