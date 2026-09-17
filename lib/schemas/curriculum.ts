@@ -40,14 +40,14 @@ export const curriculumJsonSchema = {
     overview: {
       type: "string",
       description:
-        "2-3 sentence overview of the curriculum: what it's shaped around and why.",
+        "2-4 sentences, second person: how big the lift is to field-ready for this role, why the plan is sized the way it is, and what it's shaped around. Optimistic and honest.",
     },
     modules: {
       type: "array",
-      minItems: 4,
+      minItems: 3,
       maxItems: 12,
       description:
-        "Ordered learning modules. Foundational first, then core, then advanced. Each module ties to specific gaps or reinforcement needs.",
+        "Ordered learning modules, sized to the candidate's distance from field-ready: 3-5 when nearly ready, up to 12 for a substantial staged build. Foundational first, then core, then advanced. Each module ties to specific gaps or sharpening needs.",
       items: {
         type: "object",
         properties: {

@@ -3,12 +3,8 @@
 import { redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { generateDynamicQuestions } from "@/lib/ai/generate-questionnaire";
-import {
-  COMFORT_SCALE,
-  type Question,
-} from "@/lib/schemas/questionnaire";
-import { STANDARDIZED_QUESTIONS } from "./standardized-questions";
+import { generateQuestionnaire } from "@/lib/ai/generate-questionnaire";
+import type { Question } from "@/lib/schemas/questionnaire";
 import { generateAndPersistAssessment } from "@/modules/skill-assessment/actions";
 import { generateAndPersistCurriculum } from "@/modules/curriculum/actions";
 import type { QuestionnaireForClient, AnswerInput } from "./types";
@@ -57,12 +53,13 @@ export async function ensureQuestionnaire(
     .map((w) => `${w.role}${w.company ? ` at ${w.company}` : ""} (${w.dates}) — ${w.summary}`)
     .join("\n");
 
-  const dynamic = await generateDynamicQuestions({
+  const generated = await generateQuestionnaire({
     jobTitle: job.jobTitle,
     companyName: job.companyName,
     requiredQualifications: job.competencyMap.requiredQualifications,
     preferredQualifications: job.competencyMap.preferredQualifications,
     tools: job.competencyMap.tools,
+    responsibilities: job.competencyMap.responsibilities,
     softSkills: job.competencyMap.softSkills,
     profileWorkHistorySummary: historySummary,
     profileImpliedSkills: profile.impliedSkills,
@@ -71,31 +68,28 @@ export async function ensureQuestionnaire(
     profileCertifications: profile.certifications,
   });
 
-  // Pad/truncate to exactly 10 in case Claude returned 6-14.
-  const dynamicQs: Question[] = dynamic.payload.questions
-    .slice(0, 10)
-    .map((q, i) => ({
-      id: `dyn-${i + 1}`,
-      kind: q.kind,
-      order: STANDARDIZED_QUESTIONS.length + i,
-      text: q.text,
-      targetSkill: q.targetSkill,
-      options: [...COMFORT_SCALE],
-      allowFreeText: true,
-    }));
-
-  const allQuestions: Question[] = [...STANDARDIZED_QUESTIONS, ...dynamicQs];
+  // Assign stable ids/values server-side so responses can be joined reliably.
+  const questions: Question[] = generated.payload.questions.map((q, i) => ({
+    id: `q-${i + 1}`,
+    kind: q.kind,
+    format: q.format,
+    order: i,
+    text: q.text,
+    targetSkill: q.targetSkill,
+    options: q.options.map((label, j) => ({ value: `opt-${j + 1}`, label })),
+    allowFreeText: true,
+  }));
 
   const row = await prisma.questionnaire.create({
     data: {
       userId: profile.userId,
       jobListingId,
       resumeProfileId: profile.id,
-      questions: allQuestions as unknown as Prisma.InputJsonValue,
+      questions: questions as unknown as Prisma.InputJsonValue,
     },
   });
 
-  return { id: row.id, questions: allQuestions };
+  return { id: row.id, questions };
 }
 
 export type SubmitQuestionnaireResult =
@@ -117,29 +111,32 @@ export async function submitQuestionnaire(
     return { status: "error", message: "Questionnaire not found." };
   }
 
-  const knownIds = new Set(
-    (questionnaire.questions as unknown as Question[]).map((q) => q.id),
+  const questionsById = new Map(
+    (questionnaire.questions as unknown as Question[]).map((q) => [q.id, q]),
   );
 
   await prisma.$transaction(async (tx) => {
     for (const a of answers) {
-      if (!knownIds.has(a.questionId)) continue;
+      const q = questionsById.get(a.questionId);
+      if (!q) continue;
+      const valid = new Set(q.options.map((o) => o.value));
+      const selected = (a.selectedOptions ?? []).filter((v) => valid.has(v));
+      const freeText = a.freeTextAnswer?.trim() ? a.freeTextAnswer.trim() : null;
       await tx.questionnaireResponse.upsert({
         where: {
-          questionnaireId_questionId: {
-            questionnaireId,
-            questionId: a.questionId,
-          },
+          questionnaireId_questionId: { questionnaireId, questionId: a.questionId },
         },
         create: {
           questionnaireId,
           questionId: a.questionId,
-          selectedOption: a.selectedOption,
-          freeTextAnswer: a.freeTextAnswer,
+          selectedOption: selected[0] ?? null,
+          selectedOptions: selected,
+          freeTextAnswer: freeText,
         },
         update: {
-          selectedOption: a.selectedOption,
-          freeTextAnswer: a.freeTextAnswer,
+          selectedOption: selected[0] ?? null,
+          selectedOptions: selected,
+          freeTextAnswer: freeText,
         },
       });
     }
@@ -170,9 +167,6 @@ export async function submitQuestionnaire(
   };
 }
 
-// A tiny redirect wrapper so client components can navigate after the
-// action returns (redirect() from within an action would fail on client
-// call sites that expect a value).
 export async function navigateAfterQuestionnaire(url: string) {
   redirect(url);
 }

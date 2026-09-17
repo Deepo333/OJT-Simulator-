@@ -5,18 +5,8 @@ import { prisma } from "@/lib/db/prisma";
 import { generateSkillAssessment } from "@/lib/ai/generate-assessment";
 import type { Question } from "@/lib/schemas/questionnaire";
 
-const COMFORT_LABELS: Record<string, string> = {
-  NOT_FAMILIAR: "Not familiar",
-  SOMEWHAT_FAMILIAR: "Somewhat familiar",
-  COMFORTABLE: "Comfortable",
-  VERY_COMFORTABLE: "Very comfortable",
-  HIGHLY_SKILLED: "Highly skilled",
-};
-
 // Read every input, call Claude, persist a SkillAssessment. Returns the row.
-export async function generateAndPersistAssessment(
-  questionnaireId: string,
-) {
+export async function generateAndPersistAssessment(questionnaireId: string) {
   const questionnaire = await prisma.questionnaire.findUnique({
     where: { id: questionnaireId },
     include: {
@@ -50,18 +40,28 @@ export async function generateAndPersistAssessment(
 
   const answers = questions.map((q) => {
     const r = responseById.get(q.id);
-    const label = r?.selectedOption
-      ? (q.options.find((o) => o.value === r.selectedOption)?.label ??
-        COMFORT_LABELS[r.selectedOption] ??
-        r.selectedOption)
-      : r?.freeTextAnswer
-        ? "(free-text only)"
-        : "(no answer)";
+    const chosen =
+      r?.selectedOptions && r.selectedOptions.length > 0
+        ? r.selectedOptions
+        : r?.selectedOption
+          ? [r.selectedOption]
+          : [];
+    const labels = chosen.map(
+      (v) => q.options.find((o) => o.value === v)?.label ?? v,
+    );
+    const answerLabel =
+      labels.length > 0
+        ? labels.join("; ")
+        : r?.freeTextAnswer
+          ? "(answered in their own words — see note)"
+          : "(no answer)";
     return {
       kind: q.kind,
+      format: q.format ?? "SINGLE_SELECT",
       targetSkill: q.targetSkill,
       text: q.text,
-      answerLabel: label,
+      options: q.options.map((o) => o.label),
+      answerLabel,
       freeText: r?.freeTextAnswer ?? undefined,
     };
   });
@@ -82,7 +82,7 @@ export async function generateAndPersistAssessment(
     answers,
   });
 
-  const row = await prisma.skillAssessment.create({
+  return prisma.skillAssessment.create({
     data: {
       userId: profile.userId,
       jobListingId: profile.jobListingId,
@@ -96,6 +96,4 @@ export async function generateAndPersistAssessment(
       } as unknown as Prisma.InputJsonValue,
     },
   });
-
-  return row;
 }
