@@ -45,7 +45,12 @@ jobs:
             echo "::error::DATABASE_URL secret is not set (repo Settings -> Secrets and variables -> Actions)."
             exit 1
           fi
-          v="$(printf '%s' "$RAW_DATABASE_URL" | tr -d '\r\n')"
+          # If several lines were pasted (e.g. a whole .env block), keep the
+          # first line that looks like a URL; otherwise the first non-empty line.
+          v="$(printf '%s\n' "$RAW_DATABASE_URL" | tr -d '\r' | grep -m1 '://' || true)"
+          if [ -z "$v" ]; then
+            v="$(printf '%s\n' "$RAW_DATABASE_URL" | tr -d '\r' | grep -m1 -v '^[[:space:]]*$' || true)"
+          fi
           v="$(printf '%s' "$v" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
           v="$(printf '%s' "$v" | sed -E 's/^(DATABASE_URL|POSTGRES_URL|PRISMA_DATABASE_URL|POSTGRES_PRISMA_URL)[[:space:]]*=[[:space:]]*//')"
           v="$(printf '%s' "$v" | sed -E "s/^[\"']//; s/[\"']$//")"
