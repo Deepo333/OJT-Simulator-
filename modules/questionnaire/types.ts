@@ -7,6 +7,7 @@ export interface QuestionnaireForClient {
 
 export interface AnswerInput {
   questionId: string;
-  selectedOption: string | null;
+  // Option values chosen: one for single-select, any number for multi-select.
+  selectedOptions: string[];
   freeTextAnswer: string | null;
 }

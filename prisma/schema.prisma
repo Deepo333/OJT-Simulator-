@@ -105,10 +105,24 @@ model ResumeProfile {
   @@index([jobListingId])
 }
 
+// Documents the `kind` values used inside Questionnaire.questions (JSON).
+// LEARNING_STYLE / WORK_STYLE are personalized style probes; VERIFY_CLAIMED
+// and PROBE_JOB_REQUIREMENT are skill probes. The first three values are
+// legacy from the fixed-question era and are kept only so `db push` stays
+// additive.
 enum QuestionKind {
   STANDARDIZED
   DYNAMIC_VERIFY_CLAIMED
   DYNAMIC_PROBE_JOB_REQUIREMENT
+  LEARNING_STYLE
+  WORK_STYLE
+  VERIFY_CLAIMED
+  PROBE_JOB_REQUIREMENT
+}
+
+enum AnswerFormat {
+  SINGLE_SELECT
+  MULTI_SELECT
 }
 
 model Questionnaire {
@@ -136,8 +150,10 @@ model QuestionnaireResponse {
   id              String   @id @default(cuid())
   questionnaireId String
   questionId      String
-  // Named comfort-scale value the user picked (or null if only free text).
+  // Legacy single value; kept populated for single-select answers.
   selectedOption  String?
+  // All selected option values (one for single-select, many for multi-select).
+  selectedOptions String[] @default([])
   // Optional freeform note — always available as an escape hatch.
   freeTextAnswer  String?
   createdAt       DateTime @default(now())
@@ -157,10 +173,14 @@ enum ConfidenceLevel {
   EXPERT
 }
 
+// Documentation of the values used inside SkillAssessment.skillsBreakdown
+// (a Json column) — no column is typed with this enum, so changes here are
+// additive metadata only. Source of truth: lib/schemas/skill-assessment.ts.
 enum AlignmentFlag {
   ALIGNED
   RESUME_STRONGER_THAN_CONFIDENCE
   CONFIDENCE_STRONGER_THAN_RESUME
+  EMERGING
   TRUE_GAP
   NEEDS_REINFORCEMENT
   NO_SIGNAL

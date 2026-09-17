@@ -56,10 +56,17 @@ touching the DB, use `npm run build:local`.
 2. **`/jobs/[id]`** — Competency map view. CTA: "Build your profile →".
 3. **`/jobs/[id]/profile`** — Resume upload (PDF/DOCX/paste) + three optional
    supplemental fields (extra work history, extra skills, extra certs).
-4. **`/jobs/[id]/questionnaire`** — 5 fixed + 10 dynamic questions, one at
-   a time, comfort-scale answers with a free-text escape hatch.
-5. **`/jobs/[id]/curriculum`** — Personalized roadmap: overview, true gaps,
-   reinforcement flags, and an ordered list of modules with rationales.
+4. **`/jobs/[id]/questionnaire`** — 15 questions generated from the
+   candidate's real starting point (résumé + profile), with the job as the
+   destination we measure distance to: 5 about how they learn and work, 10
+   skill probes asked through experience they actually have. One at a time;
+   single-select where options are mutually exclusive, check-all-that-apply
+   where several could be true (always with a "None of these" that opens an
+   optional note).
+5. **`/jobs/[id]/curriculum`** — Personalized roadmap sized to the distance
+   from field-ready: where you stand (already strong / worth sharpening /
+   next to build), then an ordered list of modules with a "why this, for
+   you" rationale each.
 
 ## Project structure
 
@@ -104,8 +111,10 @@ examples/
 - `ResumeProfile` — one per (user, job) attempt. Unified skill inventory:
   structured `workHistory` (JSON), plus flat `impliedSkills`,
   `toolsMentioned`, `explicitSkills`, `certifications` arrays.
-- `Questionnaire` — the 15 questions as JSON. `QuestionnaireResponse` is
-  one row per answer, uniqued by `(questionnaireId, questionId)`.
+- `Questionnaire` — the 15 generated questions as JSON (kind, format,
+  options). `QuestionnaireResponse` is one row per answer with
+  `selectedOptions[]` + optional free text, uniqued by
+  `(questionnaireId, questionId)`.
 - `SkillAssessment` — the cross-reference output: per-skill breakdown with
   `alignment` (ALIGNED / RESUME_STRONGER_THAN_CONFIDENCE / TRUE_GAP / …)
   and `confidence` (UNKNOWN → EXPERT), plus denormalized

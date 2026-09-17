@@ -1,29 +1,41 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, DEFAULT_MODEL } from "./client";
 import {
+  coerceCurriculumPayload,
   curriculumSchema,
   curriculumJsonSchema,
   type CurriculumPayload,
 } from "@/lib/schemas/curriculum";
 import type { SkillBreakdownItem } from "@/lib/schemas/skill-assessment";
 
-const SYSTEM_PROMPT = `You are a curriculum designer for a career-transition platform.
+const SYSTEM_PROMPT = `You design personalized on-the-job-training roadmaps for a career-transition platform. Write like a mentor who believes the person can get there and respects them enough to be precise about what it takes.
 
 You will be given:
-  (1) The target job (title, company, required qualifications, tools, responsibilities).
-  (2) A structured skill assessment with per-skill alignment flags (ALIGNED, NEEDS_REINFORCEMENT, RESUME_STRONGER_THAN_CONFIDENCE, CONFIDENCE_STRONGER_THAN_RESUME, TRUE_GAP, NO_SIGNAL) and confidence levels (UNKNOWN → EXPERT), plus two curated lists: reinforcementFlags (needs reinforcement despite claimed experience) and trueGaps.
+  (1) The target job (title, company, required/preferred qualifications, tools, responsibilities).
+  (2) A structured skill assessment: per-skill alignment flags (ALIGNED, NEEDS_REINFORCEMENT, RESUME_STRONGER_THAN_CONFIDENCE, CONFIDENCE_STRONGER_THAN_RESUME, EMERGING, TRUE_GAP, NO_SIGNAL), confidence levels, a summary, and two lists: reinforcementFlags (skills to sharpen despite experience on paper) and trueGaps (skills to build — both TRUE_GAP and EMERGING).
 
-Design a personalized on-the-job-training curriculum: an ordered list of modules, each targeting one or more specific skills. Foundational modules first, core modules next, advanced modules last.
+THE PLAN SCALES TO THE GOAL
+Size the roadmap to the distance between where this person is today and being field-ready for THIS role — no bigger, no smaller.
+- Close to ready (few or no true gaps, mostly sharpening): 3-5 focused modules, modest hours. Say so in the overview; don't pad.
+- A focused push (a handful of real gaps plus some sharpening): 5-8 modules.
+- A substantial, staged build (many required skills to build from scratch): 8-12 modules, sequenced so early wins come first.
+State in the overview how big the lift is and why the plan is sized that way. A short plan for someone nearly ready is a feature, not a shortfall.
 
-Rules:
-1. Prioritize TRUE_GAP skills that are required qualifications. Those come first (FOUNDATIONAL or early CORE).
-2. Include reinforcement modules for RESUME_STRONGER_THAN_CONFIDENCE and NEEDS_REINFORCEMENT skills. Frame them as reinforcement, not "learn from scratch".
-3. Don't include modules for ALIGNED, EXPERT, or CONFIDENCE_STRONGER_THAN_RESUME skills — they don't need teaching.
-4. Preferred qualifications are ADVANCED phase — only if there's a genuine gap and the candidate has bandwidth after the essentials.
-5. Every module's rationale must reference a specific gap or reinforcement need (e.g. "You marked SQL as 'Somewhat familiar' but the job requires production query work — this closes that gap.").
-6. 4-12 modules total. Enough to be useful, not so many the roadmap feels overwhelming.
-7. Give each module an integer 'order' starting at 0 and incrementing by 1.
-8. Return by calling the return_curriculum tool.
+WHAT GOES IN
+1. TRUE_GAP and EMERGING skills that are required qualifications come first (FOUNDATIONAL or early CORE). For EMERGING skills, start from the transferable foothold the assessment names — the module's first step should be something they already do, then extend it.
+2. Reinforcement modules for RESUME_STRONGER_THAN_CONFIDENCE and NEEDS_REINFORCEMENT skills, framed as sharpening what they already have — never "learn from scratch".
+3. Nothing for ALIGNED, EXPERT, or CONFIDENCE_STRONGER_THAN_RESUME skills; instead, lean on those strengths in other modules' rationales ("you're already solid at X, so this goes straight to Y").
+4. Preferred qualifications only as ADVANCED, only where there's a genuine gap, and only if the essentials leave room.
+5. Use the assessment's style signals to shape modules: a hands-on learner gets project-shaped modules; someone with short daily windows gets modules that break into small steps.
+
+TONE
+- Optimistic and honest. Gaps are "next to build"; reinforcement is "worth sharpening". Never "lacks", "weak", "deficient", "unfortunately", "only".
+- Every rationale names the specific evidence it responds to, in second person, and connects it to the job: "You marked SQL as 'followed a tutorial once' and this role runs production queries weekly — this module gets you writing them on real data."
+- Descriptions: 2-4 sentences on what the module covers and what they'll be able to do after.
+
+MECHANICS
+- 3-12 modules; integer 'order' from 0, incrementing by 1; phase FOUNDATIONAL → CORE → ADVANCED in order; estimatedHours realistic for self-directed work.
+- Return by calling the return_curriculum tool.
 `;
 
 export interface GenerateCurriculumInput {
@@ -59,9 +71,8 @@ export async function generateCurriculum(
     },
   ];
 
-  const userMessage = buildUserMessage(input);
   const messages: Anthropic.Messages.MessageParam[] = [
-    { role: "user", content: userMessage },
+    { role: "user", content: buildUserMessage(input) },
   ];
 
   let lastError: Error | null = null;
@@ -79,7 +90,11 @@ export async function generateCurriculum(
         b.type === "tool_use" && b.name === TOOL_NAME,
     );
     if (toolUse) {
-      const parsed = curriculumSchema.safeParse(toolUse.input);
+      const { payload: coerced, coercions } = coerceCurriculumPayload(toolUse.input);
+      if (coercions.length > 0) {
+        console.warn("[curriculum] coerced values:", coercions.join("; "));
+      }
+      const parsed = curriculumSchema.safeParse(coerced);
       if (parsed.success) {
         return { payload: parsed.data, raw: toolUse.input };
       }
@@ -111,10 +126,7 @@ export async function generateCurriculum(
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("\n") || "(no text)",
     });
-    messages.push({
-      role: "user",
-      content: "Call the return_curriculum tool now.",
-    });
+    messages.push({ role: "user", content: "Call the return_curriculum tool now." });
   }
   throw lastError ?? new Error("Curriculum generator failed.");
 }
@@ -143,17 +155,15 @@ function buildUserMessage(i: GenerateCurriculumInput): string {
   parts.push("--- Assessment summary ---");
   parts.push(i.assessmentSummary || "(no summary)");
   parts.push("");
-  parts.push("Reinforcement flags (claimed but low confidence):");
+  parts.push("Skills to sharpen (claimed on paper, lower hands-on confidence):");
   parts.push(bullets(i.reinforcementFlags, "none"));
   parts.push("");
-  parts.push("True gaps:");
+  parts.push("Skills to build (required, no evidence yet):");
   parts.push(bullets(i.trueGaps, "none"));
   parts.push("");
   parts.push("Full skills breakdown (json):");
   parts.push(JSON.stringify(i.skillsBreakdown, null, 2));
   parts.push("");
-  parts.push(
-    "Design the curriculum per the rules and call return_curriculum.",
-  );
+  parts.push("Design the roadmap per the rules — sized to this person's actual distance from field-ready — and call return_curriculum.");
   return parts.join("\n");
 }

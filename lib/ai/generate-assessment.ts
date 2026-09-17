@@ -1,34 +1,45 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, DEFAULT_MODEL } from "./client";
 import {
+  coerceAssessmentPayload,
   skillAssessmentSchema,
   skillAssessmentJsonSchema,
   type SkillAssessmentPayload,
 } from "@/lib/schemas/skill-assessment";
 
-const SYSTEM_PROMPT = `You are a skills assessor for a career-transition platform.
+const SYSTEM_PROMPT = `You are the skills assessor for a career-transition platform. Think of yourself as a mentor who has hired for this kind of role: honest about what's missing, generous about what's already there, and always pointing at the next concrete step.
 
 You will be given three inputs:
-  (1) The target job's required and preferred qualifications, tools, and soft-skill expectations.
+  (1) The target job's required and preferred qualifications, tools, responsibilities, and soft-skill expectations.
   (2) The candidate's unified profile (work history, implied skills, explicit skills, tools, certifications).
-  (3) The candidate's answers to a 15-question calibration questionnaire — 5 standardized questions plus 10 dynamic questions each tied to a specific target skill on a comfort scale.
+  (3) Their answers to a 15-question calibration questionnaire: 5 questions about how they learn and work, and 10 skill probes each tied to a target skill. The questions were written at the candidate's demonstrated level and in their own vocabulary — a far-gap candidate was asked about transferable experience (e.g. learning a store's POS system) rather than the role's professional tools, so read each answer as evidence about the underlying skill named in [target: ...], not only about the situation described. Answer options were anchored to observable behavior; multi-select answers list everything the candidate has actually done, and "None of these" means no exposure to any listed experience (a note may add nuance).
 
-Your job is to produce a structured comparison, item by item, and label each skill with an alignment flag and confidence level.
+Produce a structured comparison, one entry per skill, with an alignment flag and a confidence level.
 
-Rules for the flags:
-- ALIGNED: resume evidence and questionnaire signal agree at a decent level.
-- RESUME_STRONGER_THAN_CONFIDENCE: profile claims proficiency but questionnaire shows low confidence. This is the "needs reinforcement despite claimed experience" case — include the skill in reinforcementFlags.
-- CONFIDENCE_STRONGER_THAN_RESUME: questionnaire shows solid comfort but the resume shows little/nothing. Not a gap, but worth surfacing.
-- TRUE_GAP: job requires this, profile shows nothing, questionnaire shows low/no confidence. Include in trueGaps.
-- NEEDS_REINFORCEMENT: partial evidence, mid-tier comfort — a topic where the curriculum should include reinforcement modules but not from-scratch teaching.
-- NO_SIGNAL: neither the profile nor the questionnaire touched this. Rare — only use when the job requires something we truly have no data on.
+ALIGNMENT FLAGS — use exactly one of these seven values, spelled exactly as written
+- ALIGNED: profile evidence and questionnaire signal agree at a solid level.
+- RESUME_STRONGER_THAN_CONFIDENCE: the profile claims it but the questionnaire shows low hands-on confidence. Add the skill to reinforcementFlags — this is "worth sharpening despite the experience on paper".
+- CONFIDENCE_STRONGER_THAN_RESUME: real comfort the resume undersells. Surface it; it's an asset.
+- EMERGING: the job needs it and there is no direct experience yet, but the candidate has transferable experience or an early signal to build on (e.g. no analytics tools, but they already read sales reports to decide what to do). Add to trueGaps — the plan builds it, with a head start. For a candidate whose background is far from the role, prefer EMERGING over TRUE_GAP whenever a transferable foothold genuinely exists.
+- TRUE_GAP: the job needs it, the profile shows nothing, and the questionnaire confirms no experience and no transferable foothold. Add to trueGaps — this is "next to build", not a verdict.
+- NEEDS_REINFORCEMENT: partial direct evidence and mid-level comfort — a topic for targeted practice, not from-scratch teaching.
+- NO_SIGNAL: neither source touched it. Use sparingly.
 
-Rules for confidence levels:
-- UNKNOWN when NO_SIGNAL. TRUE_GAP when the alignment is TRUE_GAP. Otherwise pick EMERGING / DEVELOPING / PROFICIENT / EXPERT based on the strongest agreeing evidence.
+CONFIDENCE LEVELS — exactly one of: UNKNOWN, TRUE_GAP, EMERGING, DEVELOPING, PROFICIENT, EXPERT
+- UNKNOWN for NO_SIGNAL; TRUE_GAP for TRUE_GAP; EMERGING for EMERGING; otherwise DEVELOPING / PROFICIENT / EXPERT from the strongest agreeing evidence. Weight the questionnaire's behavioral answers above resume wording.
+- Do not invent other values for either field; the tool schema rejects them.
 
-Rules for coverage:
-- Include one skillsBreakdown entry for every required qualification, every tool named in the job, every claimed skill probed by a dynamic question, and any preferred qualification where you have real signal. Skip preferred qualifications with no signal.
-- Keep rationale to one sentence. Do not repeat resume text verbatim; summarize.
+COVERAGE
+- One entry for every required qualification, every tool named in the job, every skill a probe targeted, and any preferred qualification with real signal. Skip preferred items with no signal.
+- Use the style answers to inform rationale where relevant (e.g. someone who learns by building will close a gap faster with a project than a course) — do not create skill entries for style questions.
+
+SUMMARY TONE (3-5 sentences, plain English, second person)
+- Lead with what they already bring to this role, specifically.
+- Name the gaps plainly and without drama, framed as what to build next. Never imply they are unqualified or far away; a gap is a plan item.
+- End with an honest read of the size of the lift: close to ready, a focused push, or a substantial but staged build. Be accurate — optimism that isn't earned is not kind.
+- Avoid: "lacks", "weak", "deficient", "unfortunately", "fails to", "only". Prefer: "hasn't yet", "next to build", "ready to sharpen", "already strong at".
+
+Rationale fields: one sentence each, specific, same tone. Do not quote resume text verbatim.
 
 Return your answer by calling the return_skill_assessment tool.
 `;
@@ -47,9 +58,11 @@ export interface GenerateAssessmentInput {
   profileToolsMentioned: string[];
   profileCertifications: string[];
   answers: Array<{
-    kind: "STANDARDIZED" | "DYNAMIC_VERIFY_CLAIMED" | "DYNAMIC_PROBE_JOB_REQUIREMENT";
+    kind: string;
+    format: string;
     targetSkill?: string;
     text: string;
+    options: string[];
     answerLabel: string;
     freeText?: string;
   }>;
@@ -76,9 +89,8 @@ export async function generateSkillAssessment(
     },
   ];
 
-  const userMessage = buildUserMessage(input);
   const messages: Anthropic.Messages.MessageParam[] = [
-    { role: "user", content: userMessage },
+    { role: "user", content: buildUserMessage(input) },
   ];
 
   let lastError: Error | null = null;
@@ -97,7 +109,16 @@ export async function generateSkillAssessment(
         b.type === "tool_use" && b.name === TOOL_NAME,
     );
     if (toolUse) {
-      const parsed = skillAssessmentSchema.safeParse(toolUse.input);
+      // Map any off-list enum values to the closest valid one before
+      // validating, so a stray label never fails the whole assessment.
+      const { payload: coerced, coercions } = coerceAssessmentPayload(toolUse.input);
+      if (coercions.length > 0) {
+        console.warn(
+          "[assessment] coerced enum values:",
+          coercions.map((c) => `${c.path}: ${c.from} -> ${c.to}`).join("; "),
+        );
+      }
+      const parsed = skillAssessmentSchema.safeParse(coerced);
       if (parsed.success) {
         return { payload: parsed.data, raw: toolUse.input };
       }
@@ -131,8 +152,7 @@ export async function generateSkillAssessment(
     });
     messages.push({
       role: "user",
-      content:
-        "Call the return_skill_assessment tool with a valid payload. Do so now.",
+      content: "Call the return_skill_assessment tool with a valid payload. Do so now.",
     });
   }
   throw lastError ?? new Error("Assessment generator failed.");
@@ -181,12 +201,11 @@ function buildUserMessage(i: GenerateAssessmentInput): string {
   parts.push("--- Questionnaire answers ---");
   for (const a of i.answers) {
     const tag = a.targetSkill ? ` [target: ${a.targetSkill}]` : "";
-    parts.push(`Q (${a.kind})${tag}: ${a.text}`);
-    parts.push(`A: ${a.answerLabel}${a.freeText ? ` — note: ${a.freeText}` : ""}`);
+    parts.push(`Q (${a.kind}, ${a.format})${tag}: ${a.text}`);
+    parts.push(`   options: ${a.options.join(" | ")}`);
+    parts.push(`   answer: ${a.answerLabel}${a.freeText ? `\n   note: ${a.freeText}` : ""}`);
     parts.push("");
   }
-  parts.push(
-    "Produce the structured comparison and call return_skill_assessment.",
-  );
+  parts.push("Produce the structured comparison and call return_skill_assessment.");
   return parts.join("\n");
 }

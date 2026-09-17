@@ -51,12 +51,12 @@ export default async function QuestionnairePage({
           For {job.jobTitle} at {job.companyName}
         </p>
         <h1 className="text-3xl font-semibold tracking-tight">
-          Quick honesty check
+          A few quick questions, written for you
         </h1>
         <p className="max-w-2xl text-muted-foreground">
-          Tap through {questionnaire.questions.length} short questions. There
-          are no wrong answers — the more honest you are, the more accurate
-          your curriculum will be.
+          {questionnaire.questions.length} questions built from your background
+          and this job — some pick-one, some check-all-that-apply. There are no
+          wrong answers; honest ones just get you a better-fitting plan.
         </p>
       </header>
       <QuestionnaireFlow
