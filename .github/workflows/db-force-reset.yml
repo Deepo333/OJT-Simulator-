@@ -1,0 +1,80 @@
+# One-time, manually-triggered database reset.
+#
+# Runs `prisma db push --force-reset` against the DATABASE_URL repository
+# secret: drops every table and enum type, then recreates them from
+# prisma/schema.prisma. It never runs on push or on a schedule — only via
+# the "Run workflow" button (or the API), and only when the confirmation
+# input is exactly RESET. It does not touch package.json or the normal
+# Vercel build. Safe to delete once the reset has been performed.
+name: DB force reset (manual, one-time)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type RESET to confirm dropping ALL data in the database"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    if: ${{ github.event.inputs.confirm == 'RESET' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Guard - DATABASE_URL secret present
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is not set (repo Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+
+      - name: Force reset (drop everything, recreate from schema.prisma)
+        run: npx prisma db push --force-reset --accept-data-loss --skip-generate
+
+      - name: Verify - schema now in sync (idempotent push)
+        run: npx prisma db push --skip-generate
+
+      - name: Verify - introspect live database
+        run: npx prisma db pull --print
+
+      - name: Verify - tables, enums, CompetencyMap column types, row counts
+        run: |
+          npx prisma generate
+          node - <<'EOF'
+          const { PrismaClient } = require("@prisma/client");
+          const p = new PrismaClient();
+          (async () => {
+            const tables = await p.$queryRawUnsafe(
+              "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name"
+            );
+            console.log(`TABLES (${tables.length}): ` + tables.map(t => t.table_name).join(", "));
+            const enums = await p.$queryRawUnsafe(
+              "SELECT t.typname FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='public' AND t.typtype='e' ORDER BY 1"
+            );
+            console.log(`ENUMS (${enums.length}): ` + enums.map(e => e.typname).join(", "));
+            const cols = await p.$queryRawUnsafe(
+              "SELECT column_name, udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name='CompetencyMap' ORDER BY ordinal_position"
+            );
+            console.log("CompetencyMap columns: " + cols.map(c => `${c.column_name}:${c.udt_name}`).join(", "));
+            for (const t of tables) {
+              const r = await p.$queryRawUnsafe(`SELECT count(*)::int AS n FROM "${t.table_name}"`);
+              console.log(`rows ${t.table_name}: ${r[0].n}`);
+            }
+            await p.$disconnect();
+          })().catch(e => { console.error(e); process.exit(1); });
+          EOF
