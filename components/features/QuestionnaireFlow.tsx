@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Question } from "@/lib/schemas/questionnaire";
+import { NONE_OPTION_VALUE } from "@/lib/schemas/questionnaire-constants";
 import { submitQuestionnaire } from "@/modules/questionnaire/actions";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,23 +19,21 @@ interface AnswerState {
   freeTextAnswer: string;
 }
 
-const OTHER = "__OTHER__";
 const EMPTY: AnswerState = { selected: [], freeTextAnswer: "" };
 
-// Top-level so React keeps the same element identity across re-renders;
-// defining this inside the flow component would remount every option on
-// each selection.
+// Top-level so React keeps element identity across re-renders; defining
+// this inside the flow component would remount every option on each tap.
 function Choice({
   label,
   selected,
   isMulti,
-  dashed = false,
+  muted = false,
   onSelect,
 }: {
   label: string;
   selected: boolean;
   isMulti: boolean;
-  dashed?: boolean;
+  muted?: boolean;
   onSelect: () => void;
 }) {
   return (
@@ -45,8 +44,8 @@ function Choice({
       onClick={onSelect}
       className={cn(
         "flex w-full items-center gap-3 rounded-md border px-4 py-3 text-left text-sm transition-colors",
-        dashed && "border-dashed",
-        selected ? "border-primary bg-primary/5" : "border-input hover:bg-accent",
+        muted && "border-dashed text-muted-foreground",
+        selected ? "border-primary bg-primary/5 text-foreground" : "border-input hover:bg-accent",
       )}
     >
       <span
@@ -82,16 +81,14 @@ export function QuestionnaireFlow({ questionnaireId, questions }: Props) {
   const current = questions[index]!;
   const isMulti = (current.format ?? "SINGLE_SELECT") === "MULTI_SELECT";
   const answer = answers[current.id] ?? EMPTY;
-  const otherChosen = answer.selected.includes(OTHER);
+  const noneChosen = answer.selected.includes(NONE_OPTION_VALUE);
 
   const progress = useMemo(
     () => Math.round(((index + 1) / total) * 100),
     [index, total],
   );
 
-  const canAdvance =
-    answer.selected.length > 0 &&
-    (!otherChosen || answer.freeTextAnswer.trim().length > 0);
+  const canAdvance = answer.selected.length > 0;
 
   function update(patch: Partial<AnswerState>) {
     setAnswers((prev) => ({
@@ -101,16 +98,21 @@ export function QuestionnaireFlow({ questionnaireId, questions }: Props) {
   }
 
   function choose(value: string) {
-    if (isMulti) {
-      const has = answer.selected.includes(value);
-      update({
-        selected: has
-          ? answer.selected.filter((v) => v !== value)
-          : [...answer.selected, value],
-      });
-    } else {
+    if (!isMulti) {
       update({ selected: [value] });
+      return;
     }
+    if (value === NONE_OPTION_VALUE) {
+      // "None of these" is exclusive: it clears everything else.
+      update({ selected: noneChosen ? [] : [NONE_OPTION_VALUE] });
+      return;
+    }
+    const withoutNone = answer.selected.filter((v) => v !== NONE_OPTION_VALUE);
+    update({
+      selected: withoutNone.includes(value)
+        ? withoutNone.filter((v) => v !== value)
+        : [...withoutNone, value],
+    });
   }
 
   function next() {
@@ -128,7 +130,7 @@ export function QuestionnaireFlow({ questionnaireId, questions }: Props) {
       const a = answers[q.id] ?? EMPTY;
       return {
         questionId: q.id,
-        selectedOptions: a.selected.filter((v) => v !== OTHER),
+        selectedOptions: a.selected,
         freeTextAnswer:
           a.freeTextAnswer.trim().length > 0 ? a.freeTextAnswer.trim() : null,
       };
@@ -159,12 +161,9 @@ export function QuestionnaireFlow({ questionnaireId, questions }: Props) {
       </div>
 
       <div className="space-y-5 rounded-lg border p-6">
-        <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
-          {current.targetSkill ? <span>About: {current.targetSkill}</span> : null}
-          <span className={cn(current.targetSkill && "before:mr-2 before:content-['·']")}>
-            {isMulti ? "Check all that apply" : "Pick one"}
-          </span>
-        </div>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">
+          {isMulti ? "Check all that apply" : "Pick the one that fits best"}
+        </p>
         <h2 className="text-xl font-medium leading-snug">{current.text}</h2>
 
         <div className="space-y-2" role={isMulti ? "group" : "radiogroup"}>
@@ -174,27 +173,27 @@ export function QuestionnaireFlow({ questionnaireId, questions }: Props) {
               label={opt.label}
               selected={answer.selected.includes(opt.value)}
               isMulti={isMulti}
+              muted={opt.value === NONE_OPTION_VALUE}
               onSelect={() => choose(opt.value)}
             />
           ))}
-          {current.allowFreeText ? (
-            <Choice
-              label="Something else / let me explain"
-              selected={otherChosen}
-              isMulti={isMulti}
-              dashed
-              onSelect={() => choose(OTHER)}
-            />
-          ) : null}
 
-          {otherChosen ? (
-            <Textarea
-              value={answer.freeTextAnswer}
-              onChange={(e) => update({ freeTextAnswer: e.target.value })}
-              rows={3}
-              placeholder="A sentence is plenty."
-              className="mt-2"
-            />
+          {noneChosen ? (
+            <div className="space-y-1 pt-1">
+              <label
+                htmlFor={`elaborate-${current.id}`}
+                className="text-xs text-muted-foreground"
+              >
+                Want to say more? Optional.
+              </label>
+              <Textarea
+                id={`elaborate-${current.id}`}
+                value={answer.freeTextAnswer}
+                onChange={(e) => update({ freeTextAnswer: e.target.value })}
+                rows={3}
+                placeholder="Anything closer to your experience — a sentence is plenty."
+              />
+            </div>
           ) : answer.selected.length > 0 ? (
             <details className="mt-2">
               <summary className="cursor-pointer select-none text-xs text-muted-foreground underline-offset-4 hover:underline">

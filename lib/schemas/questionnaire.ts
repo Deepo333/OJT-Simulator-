@@ -1,8 +1,9 @@
 import { z } from "zod";
 
-// Every question is generated per user. The five style kinds are still
-// deliberately covered (learning style, tool ramp-up, ambiguity, pace/format,
-// pressure) but phrased for this person and this job.
+// Every question is generated per candidate, from the candidate's real
+// starting point (résumé + profile). The target job is the destination we
+// measure distance to; it must not leak into question wording in a way that
+// presumes the candidate is already near it.
 export const QUESTION_KINDS = [
   "LEARNING_STYLE",
   "WORK_STYLE",
@@ -12,8 +13,12 @@ export const QUESTION_KINDS = [
 
 export const ANSWER_FORMATS = ["SINGLE_SELECT", "MULTI_SELECT"] as const;
 
-export const TOTAL_QUESTIONS = 15;
-export const MIN_MULTI_SELECT = 5;
+export {
+  TOTAL_QUESTIONS,
+  NONE_OPTION_VALUE,
+  NONE_OPTION_LABEL,
+} from "./questionnaire-constants";
+import { TOTAL_QUESTIONS } from "./questionnaire-constants";
 
 export const optionSchema = z.object({
   value: z.string().min(1),
@@ -27,14 +32,15 @@ export const questionSchema = z.object({
   order: z.number().int().nonnegative(),
   text: z.string().min(3),
   targetSkill: z.string().optional(),
-  options: z.array(optionSchema).min(2).max(8),
+  options: z.array(optionSchema).min(2).max(9),
   allowFreeText: z.boolean(),
 });
 
 export type Question = z.infer<typeof questionSchema>;
 
 // Payload the Claude call must return. Options come back as labels; the
-// server assigns stable values.
+// server assigns stable values and adds the "None of these" option to
+// multi-select questions.
 export const generatedQuestionSchema = z.object({
   kind: z.enum(QUESTION_KINDS),
   format: z.enum(ANSWER_FORMATS),
@@ -44,6 +50,7 @@ export const generatedQuestionSchema = z.object({
 });
 
 export const generatedQuestionnaireSchema = z.object({
+  startingPoint: z.string().min(3),
   questions: z.array(generatedQuestionSchema).min(12).max(18),
 });
 
@@ -52,12 +59,17 @@ export type GeneratedQuestionnaire = z.infer<typeof generatedQuestionnaireSchema
 export const generatedQuestionnaireJsonSchema = {
   type: "object",
   properties: {
+    startingPoint: {
+      type: "string",
+      description:
+        "One or two sentences, for internal use: your read of the candidate's demonstrated level relative to the target role (e.g. 'Entry-level retail; no exposure to professional design tools or async product work — wide gap'). Write this first and calibrate every question to it.",
+    },
     questions: {
       type: "array",
       minItems: TOTAL_QUESTIONS,
       maxItems: TOTAL_QUESTIONS,
       description:
-        "Exactly 15 questions: 5 style questions (kinds LEARNING_STYLE / WORK_STYLE) and 10 skill probes (kinds VERIFY_CLAIMED / PROBE_JOB_REQUIREMENT). At least 5 must be MULTI_SELECT.",
+        "Exactly 15 questions: 5 about how the candidate learns and works (kinds LEARNING_STYLE / WORK_STYLE) and 10 skill probes (kinds VERIFY_CLAIMED / PROBE_JOB_REQUIREMENT), all written at the candidate's demonstrated level and in their vocabulary.",
       items: {
         type: "object",
         properties: {
@@ -65,23 +77,23 @@ export const generatedQuestionnaireJsonSchema = {
             type: "string",
             enum: [...QUESTION_KINDS],
             description:
-              "LEARNING_STYLE: how this person learns best. WORK_STYLE: how they handle ambiguity, pace, pressure, unfamiliar tools. VERIFY_CLAIMED: a skill their profile claims. PROBE_JOB_REQUIREMENT: a skill the job needs that the profile doesn't clearly evidence.",
+              "LEARNING_STYLE: how this person learns. WORK_STYLE: how they handle ambiguity, pressure, pace, unfamiliar situations. VERIFY_CLAIMED: probes something the résumé/profile claims. PROBE_JOB_REQUIREMENT: measures distance to something the destination role needs, asked through experience the candidate actually has.",
           },
           format: {
             type: "string",
             enum: [...ANSWER_FORMATS],
             description:
-              "SINGLE_SELECT for scales and either/or choices. MULTI_SELECT when several options can genuinely be true at once (e.g. 'which of these have you actually done').",
+              "Decide from the shape of the options, never from a quota. MULTI_SELECT when a person could honestly resonate with more than one option (learning styles, things they've done, situations they've been in). SINGLE_SELECT when options are mutually exclusive (a scale, a confidence level, one clear position) — and then write options so exactly one fits.",
           },
           targetSkill: {
             type: "string",
             description:
-              "Required for VERIFY_CLAIMED and PROBE_JOB_REQUIREMENT: the specific skill/tool this probes, 2-6 words. Omit for style questions.",
+              "Required for VERIFY_CLAIMED and PROBE_JOB_REQUIREMENT: the underlying skill being measured, 2-6 words, in the destination role's terms (internal label — it does NOT need to appear in the question text). Omit for style questions.",
           },
           text: {
             type: "string",
             description:
-              "The question, second person, under 30 words. Concrete and scenario-based where possible.",
+              "The question, second person, under 30 words, in vocabulary the candidate has demonstrated. Refer to work they have actually done. Never name a professional tool from the job description as if they have used it.",
           },
           options: {
             type: "array",
@@ -89,7 +101,7 @@ export const generatedQuestionnaireJsonSchema = {
             maxItems: 7,
             items: { type: "string" },
             description:
-              "Answer options as short labels. For scales, anchor each label to observable behavior, ordered low to high. For MULTI_SELECT, each option is a distinct thing the person may or may not have done. Do not include an 'other' option — the UI adds a free-text escape hatch.",
+              "Short answer labels in plain language. For SINGLE_SELECT scales: ordered low to high, each anchored to something observable, mutually exclusive. For MULTI_SELECT: distinct, checkable facts or experiences. Do NOT include 'None of these', 'Other', or 'Not applicable' — the interface adds 'None of these' to every multi-select question.",
           },
         },
         required: ["kind", "format", "text", "options"],
@@ -97,6 +109,6 @@ export const generatedQuestionnaireJsonSchema = {
       },
     },
   },
-  required: ["questions"],
+  required: ["startingPoint", "questions"],
   additionalProperties: false,
 } as const;

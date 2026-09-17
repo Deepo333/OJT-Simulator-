@@ -3,34 +3,33 @@ import { getAnthropicClient, DEFAULT_MODEL } from "./client";
 import {
   generatedQuestionnaireSchema,
   generatedQuestionnaireJsonSchema,
-  MIN_MULTI_SELECT,
   TOTAL_QUESTIONS,
   type GeneratedQuestionnaire,
 } from "@/lib/schemas/questionnaire";
 
-const SYSTEM_PROMPT = `You design the calibration questionnaire for a career-transition platform. Your 15 questions decide what a person's training plan contains, so every question must earn its place.
+const SYSTEM_PROMPT = `You design the calibration questionnaire for a career-transition platform. Its job is to build an honest picture of where THIS candidate actually stands today, so a curriculum can bridge the gap from their real starting point to a target role.
 
-You will be given the target job (title, required/preferred qualifications, tools, responsibilities, soft skills) and the candidate's unified profile (work history, explicit and implied skills, tools, certifications). Write EXACTLY ${TOTAL_QUESTIONS} questions, all tailored to this person and this job.
+THE CORE PRINCIPLE
+The candidate's résumé and profile are their true current level. Generate every question FROM that level. The target job is only the destination we measure distance to: use it to decide WHAT to measure, never to decide HOW to phrase it. A question must never presume the candidate is already near the destination. A candidate whose background is far from the role (say, entry-level retail aiming at product design) must get questions that make complete sense to them and that they can answer honestly from their own experience.
 
-COMPOSITION
-- 5 style questions covering, one each: how they learn best (LEARNING_STYLE); how they get up to speed on an unfamiliar tool (WORK_STYLE); how they handle ambiguous or incomplete instructions (WORK_STYLE); the learning pace and format that fits their life (LEARNING_STYLE); how they operate under real deadline pressure (WORK_STYLE). Personalize each one — reference their actual background or the job's actual conditions — instead of asking generically.
-- 10 skill probes: VERIFY_CLAIMED for skills the profile asserts, PROBE_JOB_REQUIREMENT for skills the job needs that the profile doesn't clearly show. Prioritize the required qualifications and named tools; cover a range rather than five variations of one skill.
+Before writing anything, read the profile and set startingPoint: your one-line read of their demonstrated level relative to the destination (far / partial / close, and why). Then calibrate difficulty and vocabulary to it.
 
-QUESTION QUALITY — the standard is "decision-useful signal about field readiness"
-- Anchor every skill probe to what the job actually demands on day one. Ask about doing, not knowing: "Which of these have you actually done with Amplitude?" beats "How familiar are you with Amplitude?"
-- Each question must change the plan depending on the answer. If every answer would lead to the same module, cut the question.
-- Prefer concrete scenarios drawn from the job's responsibilities over abstract self-ratings.
-- Scale options must be anchored in observable behavior and ordered low to high, e.g. "Haven't used it" / "Followed a tutorial once" / "Used it on a real project with help" / "Ship with it independently" / "Others come to me for it". Never use bare adjectives like "Somewhat familiar".
-- Make it safe to answer honestly: neutral, non-judgmental wording; no option should read as the embarrassing one.
+WRITE EXACTLY ${TOTAL_QUESTIONS} QUESTIONS
+- 5 about how they learn and work, one each: how they learn best (LEARNING_STYLE); how they get up to speed on something unfamiliar (WORK_STYLE); how they handle unclear or incomplete instructions (WORK_STYLE); the pace and format of learning that fits their life (LEARNING_STYLE); how they operate under real pressure or deadlines (WORK_STYLE).
+- 10 skill probes: VERIFY_CLAIMED for things the résumé or profile asserts — treat every claim as something to verify, not a fact to build on; PROBE_JOB_REQUIREMENT for things the destination role needs, prioritizing its required qualifications and named tools. Cover a range rather than five variations of one skill.
 
-ANSWER FORMATS
-- SINGLE_SELECT for scales and either/or choices.
-- MULTI_SELECT when several options can genuinely be true at the same time — "which of these have you done", "which of these apply to how you work". At least ${MIN_MULTI_SELECT} of the 15 must be MULTI_SELECT, and multi-select options must be distinct, checkable facts, not a scale.
-- 3-7 options per question. Do not add an "other" option; the interface always offers a free-text escape hatch.
+RULES THAT FOLLOW FROM THE PRINCIPLE
+1. Calibrate to the candidate. Ask about work they have actually done. If the profile shows retail, ask "Have you used any software tools in your work, like a point-of-sale system?" — not "Which of these have you done in Figma?". If the profile already shows relevant professional experience, you may use more advanced phrasing, but still verify rather than assume.
+2. Use the candidate's own vocabulary. Never use insider terminology they have shown no exposure to. Never name a specific professional tool from the job description in a question as if they have used it. targetSkill is an internal label in the destination's terms; it does not need to appear in the text.
+3. Measure traits through transferable experience. To learn how someone approaches an unfamiliar tool, ask about a tool they HAVE used ("When you had to learn your store's POS system, how did you go about it?"). Same signal, honest framing. Apply this to learning style, work style, pressure, confidence, and unfamiliar situations.
+4. Choose the format from the shape of the question, not a count. If a person could honestly resonate with more than one option (learning styles, experiences they've had, situations they've handled), it MUST be MULTI_SELECT. If the options are mutually exclusive (a scale, a confidence level, one clear position), it must be SINGLE_SELECT — and write those options so only one truly fits; the person should never feel torn on a single-select question.
+5. Scale options: ordered low to high, each anchored to something observable ("Never done it" / "Done it once with help" / "Do it regularly on my own" / "Others ask me how"), never bare adjectives. Multi-select options: distinct, checkable facts. Do not add "None of these", "Other" or "Not applicable" — the interface adds "None of these" to every multi-select question.
+6. Decision-useful only. Each question must change the plan depending on the answer; if every answer would lead to the same module, cut it.
+7. Make honesty easy: neutral wording, no option that reads as the embarrassing one, no jargon.
 
 STYLE
-- Second person, under 30 words per question, plain language. No jargon the candidate wouldn't use.
-- Return the questionnaire by calling the return_questionnaire tool.
+- Second person, under 30 words per question, plain language.
+- Return by calling the return_questionnaire tool.
 `;
 
 export interface GenerateQuestionnaireInput {
@@ -62,12 +61,6 @@ function compositionProblems(q: GeneratedQuestionnaire): string[] {
   if (n !== TOTAL_QUESTIONS) {
     problems.push(`expected exactly ${TOTAL_QUESTIONS} questions, got ${n}`);
   }
-  const multi = q.questions.filter((x) => x.format === "MULTI_SELECT").length;
-  if (multi < MIN_MULTI_SELECT) {
-    problems.push(
-      `only ${multi} MULTI_SELECT questions; at least ${MIN_MULTI_SELECT} are required`,
-    );
-  }
   const style = q.questions.filter(
     (x) => x.kind === "LEARNING_STYLE" || x.kind === "WORK_STYLE",
   ).length;
@@ -82,6 +75,14 @@ function compositionProblems(q: GeneratedQuestionnaire): string[] {
   if (missingTarget > 0) {
     problems.push(`${missingTarget} skill probes are missing targetSkill`);
   }
+  const noneLike = q.questions.filter((x) =>
+    x.options.some((o) => /^(none of (these|the above)|other|not applicable|n\/a)\b/i.test(o)),
+  ).length;
+  if (noneLike > 0) {
+    problems.push(
+      `${noneLike} questions include a 'None of these' / 'Other' style option — remove them; the interface adds 'None of these' itself`,
+    );
+  }
   return problems;
 }
 
@@ -93,7 +94,7 @@ export async function generateQuestionnaire(
   const tools: Anthropic.Messages.Tool[] = [
     {
       name: TOOL_NAME,
-      description: `Return exactly ${TOTAL_QUESTIONS} tailored questions for this candidate and job.`,
+      description: `Return exactly ${TOTAL_QUESTIONS} questions calibrated to this candidate's real starting point.`,
       input_schema:
         generatedQuestionnaireJsonSchema as unknown as Anthropic.Messages.Tool["input_schema"],
     },
@@ -148,8 +149,8 @@ export async function generateQuestionnaire(
     }
 
     lastError = new Error(problems.join("; "));
-    // Only retry on composition problems for the first two attempts; on the
-    // last attempt accept a schema-valid payload rather than fail the user.
+    // On the last attempt accept a schema-valid payload rather than fail the
+    // user; the server strips any stray "None/Other" options anyway.
     if (parsed.success && attempt === 3) {
       return { payload: parsed.data, raw: toolUse.input };
     }
@@ -178,9 +179,28 @@ function bullets(items: string[], empty: string): string {
   return items.map((s) => `  - ${s}`).join("\n");
 }
 
+// Profile first, on purpose: it is the starting point the questions come
+// from. The job follows, labelled as the destination.
 function buildUserMessage(i: GenerateQuestionnaireInput): string {
   return [
-    `Target job: ${i.jobTitle} at ${i.companyName}`,
+    "=== THE CANDIDATE (starting point — generate questions from here) ===",
+    "Work history:",
+    i.profileWorkHistorySummary || "(no work history parsed — treat as no professional experience on record)",
+    "",
+    "Skills they list themselves (claims to verify):",
+    bullets(i.profileExplicitSkills, "none listed"),
+    "",
+    "Skills implied by their responsibilities (inferences to verify):",
+    bullets(i.profileImpliedSkills, "none"),
+    "",
+    "Tools and software they have actually mentioned using (the only tools you may name as used):",
+    bullets(i.profileToolsMentioned, "none — do not name any professional tool as used"),
+    "",
+    "Certifications:",
+    bullets(i.profileCertifications, "none"),
+    "",
+    "=== THE DESTINATION (what to measure distance to — not how to phrase) ===",
+    `Target role: ${i.jobTitle} at ${i.companyName}`,
     "",
     "Required qualifications:",
     bullets(i.requiredQualifications, "none listed"),
@@ -188,31 +208,15 @@ function buildUserMessage(i: GenerateQuestionnaireInput): string {
     "Preferred qualifications:",
     bullets(i.preferredQualifications, "none listed"),
     "",
-    "Tools/software named in the listing:",
+    "Tools named by the role (measure distance to these via experience the candidate actually has; do not assume use):",
     bullets(i.tools, "none named"),
     "",
-    "Core responsibilities (use these for scenarios):",
+    "Responsibilities of the role:",
     bullets(i.responsibilities, "none listed"),
     "",
-    "Soft skills expected:",
+    "Soft skills the role expects:",
     bullets(i.softSkills, "none named"),
     "",
-    "--- Candidate profile ---",
-    "Work history summary:",
-    i.profileWorkHistorySummary || "(no work history parsed)",
-    "",
-    "Explicit skills listed by candidate:",
-    bullets(i.profileExplicitSkills, "none"),
-    "",
-    "Implied skills (inferred from responsibilities):",
-    bullets(i.profileImpliedSkills, "none"),
-    "",
-    "Tools mentioned in the profile:",
-    bullets(i.profileToolsMentioned, "none"),
-    "",
-    "Certifications:",
-    bullets(i.profileCertifications, "none"),
-    "",
-    `Write the ${TOTAL_QUESTIONS} questions per the rules and call ${TOOL_NAME}.`,
+    `Set startingPoint, then write the ${TOTAL_QUESTIONS} questions per the principle and call ${TOOL_NAME}.`,
   ].join("\n");
 }

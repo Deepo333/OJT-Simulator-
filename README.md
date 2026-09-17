@@ -56,10 +56,13 @@ touching the DB, use `npm run build:local`.
 2. **`/jobs/[id]`** — Competency map view. CTA: "Build your profile →".
 3. **`/jobs/[id]/profile`** — Resume upload (PDF/DOCX/paste) + three optional
    supplemental fields (extra work history, extra skills, extra certs).
-4. **`/jobs/[id]/questionnaire`** — 15 questions generated for this person
-   and this job (5 personalized style questions + 10 field-readiness skill
-   probes), one at a time; single-select for scales, check-all-that-apply
-   where several options can be true, always with a free-text escape hatch.
+4. **`/jobs/[id]/questionnaire`** — 15 questions generated from the
+   candidate's real starting point (résumé + profile), with the job as the
+   destination we measure distance to: 5 about how they learn and work, 10
+   skill probes asked through experience they actually have. One at a time;
+   single-select where options are mutually exclusive, check-all-that-apply
+   where several could be true (always with a "None of these" that opens an
+   optional note).
 5. **`/jobs/[id]/curriculum`** — Personalized roadmap sized to the distance
    from field-ready: where you stand (already strong / worth sharpening /
    next to build), then an ordered list of modules with a "why this, for

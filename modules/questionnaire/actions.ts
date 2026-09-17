@@ -4,7 +4,11 @@ import { redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { generateQuestionnaire } from "@/lib/ai/generate-questionnaire";
-import type { Question } from "@/lib/schemas/questionnaire";
+import {
+  NONE_OPTION_LABEL,
+  NONE_OPTION_VALUE,
+  type Question,
+} from "@/lib/schemas/questionnaire";
 import { generateAndPersistAssessment } from "@/modules/skill-assessment/actions";
 import { generateAndPersistCurriculum } from "@/modules/curriculum/actions";
 import type { QuestionnaireForClient, AnswerInput } from "./types";
@@ -69,16 +73,26 @@ export async function ensureQuestionnaire(
   });
 
   // Assign stable ids/values server-side so responses can be joined reliably.
-  const questions: Question[] = generated.payload.questions.map((q, i) => ({
-    id: `q-${i + 1}`,
-    kind: q.kind,
-    format: q.format,
-    order: i,
-    text: q.text,
-    targetSkill: q.targetSkill,
-    options: q.options.map((label, j) => ({ value: `opt-${j + 1}`, label })),
-    allowFreeText: true,
-  }));
+  // Every multi-select question gets a "None of these" option; any stray
+  // none/other option the model added is dropped so it never appears twice.
+  const noneLike = /^(none of (these|the above)|other|not applicable|n\/a)\b/i;
+  const questions: Question[] = generated.payload.questions.map((q, i) => {
+    const labels = q.options.filter((label) => !noneLike.test(label));
+    const options = labels.map((label, j) => ({ value: `opt-${j + 1}`, label }));
+    if (q.format === "MULTI_SELECT") {
+      options.push({ value: NONE_OPTION_VALUE, label: NONE_OPTION_LABEL });
+    }
+    return {
+      id: `q-${i + 1}`,
+      kind: q.kind,
+      format: q.format,
+      order: i,
+      text: q.text,
+      targetSkill: q.targetSkill,
+      options,
+      allowFreeText: true,
+    };
+  });
 
   const row = await prisma.questionnaire.create({
     data: {
@@ -120,7 +134,9 @@ export async function submitQuestionnaire(
       const q = questionsById.get(a.questionId);
       if (!q) continue;
       const valid = new Set(q.options.map((o) => o.value));
-      const selected = (a.selectedOptions ?? []).filter((v) => valid.has(v));
+      let selected = (a.selectedOptions ?? []).filter((v) => valid.has(v));
+      // "None of these" is exclusive.
+      if (selected.includes(NONE_OPTION_VALUE)) selected = [NONE_OPTION_VALUE];
       const freeText = a.freeTextAnswer?.trim() ? a.freeTextAnswer.trim() : null;
       await tx.questionnaireResponse.upsert({
         where: {
