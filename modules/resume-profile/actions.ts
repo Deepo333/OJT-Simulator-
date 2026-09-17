@@ -1,6 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { extractResumeText } from "@/lib/resume/extract-text";
@@ -12,8 +11,11 @@ import {
 
 const DEMO_EMAIL = "demo@career-forge.local";
 
+// Returns the destination on success rather than calling redirect() — see
+// the note in modules/job-analysis/actions.ts.
 export type ResumeProfileFormState =
   | { status: "idle" }
+  | { status: "success"; redirectTo: string }
   | { status: "error"; errors: ResumeProfileFormError[] };
 
 async function ensureDemoUser() {
@@ -144,5 +146,5 @@ export async function buildResumeProfile(
     },
   });
 
-  redirect(`/jobs/${jobListingId}/questionnaire`);
+  return { status: "success", redirectTo: `/jobs/${jobListingId}/questionnaire` };
 }
